@@ -1,0 +1,22 @@
+[project]
+name = "personal-ai"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Shoaib167", email = "shoaibh@touchpointstechnology.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.141.1",
+    "litellm>=1.95.0",
+    "python-dotenv>=1.2.2",
+    "uvicorn>=0.52.1",
+]
+
+[project.scripts]
+personal-ai = "personal_ai:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
