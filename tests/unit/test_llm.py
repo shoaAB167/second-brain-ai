@@ -8,6 +8,7 @@ from personal_ai.llm import (
     LLMClient,
     LLMConnectionException,
     LLMException,
+    LLMMessage,
     LLMProvider,
     LLMRateLimitException,
     LLMResponse,
@@ -72,9 +73,11 @@ async def test_generate_response_returns_llm_response() -> None:
         mock_acompletion.return_value = mock_response
 
         client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
-        result = await client.generate_response(
-            prompt="Hello", system_prompt="You are a helpful AI"
-        )
+        messages = [
+            LLMMessage(role="system", content="You are a helpful AI"),
+            LLMMessage(role="user", content="Hello"),
+        ]
+        result = await client.generate_response(messages=messages)
 
         assert isinstance(result, LLMResponse)
         assert result.content == "Mocked response text"
@@ -109,10 +112,9 @@ async def test_exception_mapping_authentication() -> None:
 
         client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
         with pytest.raises(LLMAuthenticationException) as exc_info:
-            await client.generate_response("Hello")
+            await client.generate_response([LLMMessage(role="user", content="Hello")])
 
         assert exc_info.value.status_code == 401
-        # Raw provider secret should not be in the exception message returned to client
         assert "secret_key_12345" not in exc_info.value.message
 
 
@@ -131,7 +133,7 @@ async def test_exception_mapping_rate_limit() -> None:
 
         client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
         with pytest.raises(LLMRateLimitException) as exc_info:
-            await client.generate_response("Hello")
+            await client.generate_response([LLMMessage(role="user", content="Hello")])
 
         assert exc_info.value.status_code == 429
 
@@ -148,7 +150,7 @@ async def test_exception_mapping_connection() -> None:
 
         client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
         with pytest.raises(LLMConnectionException) as exc_info:
-            await client.generate_response("Hello")
+            await client.generate_response([LLMMessage(role="user", content="Hello")])
 
         assert exc_info.value.status_code == 503
 
@@ -159,13 +161,14 @@ async def test_acceptance_zero_code_change_provider_switch() -> None:
     mock_response = MagicMock()
     mock_response.choices = [MagicMock(message=MagicMock(content="Response"))]
     mock_response.usage = None
+    messages = [LLMMessage(role="user", content="Test prompt")]
 
     # Test Provider 1: OpenAI
     settings_openai = Settings(llm_provider="openai", llm_model="gpt-4o")
     client_1 = LiteLLMClient(settings=settings_openai)
     with patch("litellm.acompletion", new_callable=AsyncMock) as mock_1:
         mock_1.return_value = mock_response
-        res1 = await client_1.generate_response("Test prompt")
+        res1 = await client_1.generate_response(messages)
         assert res1.provider == "openai"
         assert mock_1.call_args.kwargs["model"] == "openai/gpt-4o"
 
@@ -176,7 +179,7 @@ async def test_acceptance_zero_code_change_provider_switch() -> None:
     client_2 = LiteLLMClient(settings=settings_anthropic)
     with patch("litellm.acompletion", new_callable=AsyncMock) as mock_2:
         mock_2.return_value = mock_response
-        res2 = await client_2.generate_response("Test prompt")
+        res2 = await client_2.generate_response(messages)
         assert res2.provider == "anthropic"
         assert mock_2.call_args.kwargs["model"] == "anthropic/claude-3-5-sonnet-20241022"
 
@@ -185,6 +188,6 @@ async def test_acceptance_zero_code_change_provider_switch() -> None:
     client_3 = LiteLLMClient(settings=settings_ollama)
     with patch("litellm.acompletion", new_callable=AsyncMock) as mock_3:
         mock_3.return_value = mock_response
-        res3 = await client_3.generate_response("Test prompt")
+        res3 = await client_3.generate_response(messages)
         assert res3.provider == "ollama"
         assert mock_3.call_args.kwargs["model"] == "ollama/llama3"

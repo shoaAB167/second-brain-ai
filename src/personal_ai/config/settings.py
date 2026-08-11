@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     openrouter_api_key: Optional[str] = None
     ollama_api_base: Optional[str] = "http://localhost:11434"
 
+    # Database Settings
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/second_brain_ai"
+
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(

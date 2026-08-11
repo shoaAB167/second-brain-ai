@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, List
 
-from personal_ai.llm.models import LLMResponse
+from personal_ai.llm.models import LLMMessage, LLMResponse
 
 
 class LLMClient(ABC):
@@ -15,15 +15,13 @@ class LLMClient(ABC):
     @abstractmethod
     async def generate_response(
         self,
-        prompt: str,
-        system_prompt: Optional[str] = None,
+        messages: List[LLMMessage],
         **kwargs: Any,
     ) -> LLMResponse:
-        """Generate a text response from the configured LLM backend.
+        """Generate a text response given a sequence of domain LLMMessage objects.
 
         Args:
-            prompt: The input user prompt or text message.
-            system_prompt: Optional system instruction to guide model output.
+            messages: List of structured domain messages (system, user, assistant).
             **kwargs: Optional execution hyper-parameters (e.g., temperature, max_tokens).
 
         Returns:

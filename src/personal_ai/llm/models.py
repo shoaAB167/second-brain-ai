@@ -15,6 +15,13 @@ class LLMProvider(str, Enum):
     OLLAMA = "ollama"
 
 
+class LLMMessage(BaseModel):
+    """Domain message representation for LLM interactions."""
+
+    role: str = Field(..., description="Role of the message sender (e.g. user, assistant, system).")
+    content: str = Field(..., description="Text content of the message.")
+
+
 class LLMResponse(BaseModel):
     """Container for complete LLM response data and execution metadata."""
 
