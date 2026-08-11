@@ -15,6 +15,12 @@ dependencies = [
     "uvicorn>=0.52.1",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
 [project.scripts]
 personal-ai = "personal_ai:main"
 

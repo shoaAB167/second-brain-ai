@@ -1,1 +1,6 @@
-"""Models module containing data models, domain objects, and database ORM entities."""
+from personal_ai.models.chat import ChatRequest, ChatResponse
+
+__all__ = [
+    "ChatRequest",
+    "ChatResponse",
+]
