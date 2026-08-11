@@ -8,9 +8,9 @@ from personal_ai.llm import (
     LLMClient,
     LLMConnectionException,
     LLMException,
-    LLMModel,
     LLMProvider,
     LLMRateLimitException,
+    LLMResponse,
     get_llm_client,
 )
 from personal_ai.llm.litellm_client import LiteLLMClient
@@ -28,13 +28,11 @@ def test_factory_returns_llm_client() -> None:
     assert isinstance(client, LLMClient)
 
 
-def test_model_constants_and_enums() -> None:
-    """Verify provider and model enum constants."""
+def test_provider_enum_constants() -> None:
+    """Verify provider enum constants."""
     assert LLMProvider.OPENAI == "openai"
     assert LLMProvider.ANTHROPIC == "anthropic"
     assert LLMProvider.GEMINI == "gemini"
-    assert LLMModel.GPT_4O_MINI == "gpt-4o-mini"
-    assert LLMModel.CLAUDE_3_5_SONNET == "claude-3-5-sonnet-20241022"
 
 
 def test_litellm_model_formatting() -> None:
@@ -57,24 +55,37 @@ def test_litellm_model_formatting() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_response_success() -> None:
-    """Verify successful LLM response generation with system prompt and message formatting."""
+async def test_generate_response_returns_llm_response() -> None:
+    """Verify successful LLM response generation returning structured LLMResponse."""
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 10
+    mock_usage.completion_tokens = 20
+    mock_usage.total_tokens = 30
+
     mock_response = MagicMock()
     mock_response.choices = [
         MagicMock(message=MagicMock(content="Mocked response text"))
     ]
+    mock_response.usage = mock_usage
 
     with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
         mock_acompletion.return_value = mock_response
 
         client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
-        response = await client.generate_response(
+        result = await client.generate_response(
             prompt="Hello", system_prompt="You are a helpful AI"
         )
 
-        assert response == "Mocked response text"
-        mock_acompletion.assert_called_once()
+        assert isinstance(result, LLMResponse)
+        assert result.content == "Mocked response text"
+        assert result.provider == "openai"
+        assert result.model == "gpt-4o-mini"
+        assert result.prompt_tokens == 10
+        assert result.completion_tokens == 20
+        assert result.total_tokens == 30
+        assert result.latency_ms >= 0.0
 
+        mock_acompletion.assert_called_once()
         call_kwargs = mock_acompletion.call_args.kwargs
         assert call_kwargs["model"] == "openai/gpt-4o-mini"
         assert call_kwargs["messages"] == [
@@ -85,12 +96,15 @@ async def test_generate_response_success() -> None:
 
 @pytest.mark.asyncio
 async def test_exception_mapping_authentication() -> None:
-    """Verify LiteLLM AuthenticationError is mapped to LLMAuthenticationException."""
+    """Verify LiteLLM AuthenticationError is mapped to LLMAuthenticationException with sanitized message."""
     import litellm
 
     with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
         mock_acompletion.side_effect = litellm.exceptions.AuthenticationError(
-            message="Invalid API Key", response=MagicMock(), llm_provider="openai", model="gpt-4o-mini"
+            message="Invalid API Key secret_key_12345",
+            response=MagicMock(),
+            llm_provider="openai",
+            model="gpt-4o-mini",
         )
 
         client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
@@ -98,7 +112,8 @@ async def test_exception_mapping_authentication() -> None:
             await client.generate_response("Hello")
 
         assert exc_info.value.status_code == 401
-        assert "authentication failed" in str(exc_info.value).lower()
+        # Raw provider secret should not be in the exception message returned to client
+        assert "secret_key_12345" not in exc_info.value.message
 
 
 @pytest.mark.asyncio
@@ -108,7 +123,10 @@ async def test_exception_mapping_rate_limit() -> None:
 
     with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
         mock_acompletion.side_effect = litellm.exceptions.RateLimitError(
-            message="Rate limit exceeded", response=MagicMock(), llm_provider="openai", model="gpt-4o-mini"
+            message="Rate limit exceeded",
+            response=MagicMock(),
+            llm_provider="openai",
+            model="gpt-4o-mini",
         )
 
         client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
@@ -136,34 +154,19 @@ async def test_exception_mapping_connection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_check_success_and_failure() -> None:
-    """Verify health_check returns True on success and False on error."""
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock(message=MagicMock(content="pong"))]
-
-    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
-        mock_acompletion.return_value = mock_response
-        client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
-        assert await client.health_check() is True
-
-    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
-        mock_acompletion.side_effect = Exception("Service unavailable")
-        client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
-        assert await client.health_check() is False
-
-
-@pytest.mark.asyncio
 async def test_acceptance_zero_code_change_provider_switch() -> None:
     """Acceptance test: Changing LLM_PROVIDER or LLM_MODEL in settings requires zero code changes."""
     mock_response = MagicMock()
     mock_response.choices = [MagicMock(message=MagicMock(content="Response"))]
+    mock_response.usage = None
 
     # Test Provider 1: OpenAI
     settings_openai = Settings(llm_provider="openai", llm_model="gpt-4o")
     client_1 = LiteLLMClient(settings=settings_openai)
     with patch("litellm.acompletion", new_callable=AsyncMock) as mock_1:
         mock_1.return_value = mock_response
-        await client_1.generate_response("Test prompt")
+        res1 = await client_1.generate_response("Test prompt")
+        assert res1.provider == "openai"
         assert mock_1.call_args.kwargs["model"] == "openai/gpt-4o"
 
     # Test Provider 2: Anthropic
@@ -173,7 +176,8 @@ async def test_acceptance_zero_code_change_provider_switch() -> None:
     client_2 = LiteLLMClient(settings=settings_anthropic)
     with patch("litellm.acompletion", new_callable=AsyncMock) as mock_2:
         mock_2.return_value = mock_response
-        await client_2.generate_response("Test prompt")
+        res2 = await client_2.generate_response("Test prompt")
+        assert res2.provider == "anthropic"
         assert mock_2.call_args.kwargs["model"] == "anthropic/claude-3-5-sonnet-20241022"
 
     # Test Provider 3: Ollama
@@ -181,5 +185,6 @@ async def test_acceptance_zero_code_change_provider_switch() -> None:
     client_3 = LiteLLMClient(settings=settings_ollama)
     with patch("litellm.acompletion", new_callable=AsyncMock) as mock_3:
         mock_3.return_value = mock_response
-        await client_3.generate_response("Test prompt")
+        res3 = await client_3.generate_response("Test prompt")
+        assert res3.provider == "ollama"
         assert mock_3.call_args.kwargs["model"] == "ollama/llama3"

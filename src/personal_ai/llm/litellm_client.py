@@ -12,6 +12,7 @@ from personal_ai.llm.exceptions import (
     LLMException,
     LLMRateLimitException,
 )
+from personal_ai.llm.models import LLMResponse
 
 logger = get_logger(__name__)
 
@@ -74,7 +75,7 @@ class LiteLLMClient(LLMClient):
         prompt: str,
         system_prompt: Optional[str] = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> LLMResponse:
         """Generate text response using LiteLLM.
 
         Args:
@@ -83,7 +84,7 @@ class LiteLLMClient(LLMClient):
             **kwargs: Extra parameters passed to completion engine.
 
         Returns:
-            str: Generated text response.
+            LLMResponse: Structured response containing text content and execution metadata.
 
         Raises:
             LLMAuthenticationException: On authentication errors.
@@ -126,32 +127,48 @@ class LiteLLMClient(LLMClient):
                 latency_ms,
             )
 
-            content = response.choices[0].message.content
-            return content if content is not None else ""
+            content = response.choices[0].message.content or ""
+            usage = getattr(response, "usage", None)
+
+            prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
+            completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
+            total_tokens = getattr(usage, "total_tokens", None) if usage else None
+
+            return LLMResponse(
+                content=content,
+                provider=self._provider,
+                model=self._model,
+                latency_ms=round(latency_ms, 2),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+            )
 
         except litellm.exceptions.AuthenticationError as exc:
             latency_ms = (time.perf_counter() - start_time) * 1000
             logger.error(
-                "LLM authentication failed [provider=%s, model=%s, latency=%.2fms]",
+                "LLM authentication failed [provider=%s, model=%s, latency=%.2fms]: %s",
                 self._provider,
                 self._model,
                 latency_ms,
+                exc,
             )
             raise LLMAuthenticationException(
-                message=f"LLM authentication failed for provider '{self._provider}': {exc}",
+                message="LLM provider authentication failed. Please check configured API key.",
                 details={"provider": self._provider, "model": self._model},
             ) from exc
 
         except litellm.exceptions.RateLimitError as exc:
             latency_ms = (time.perf_counter() - start_time) * 1000
             logger.error(
-                "LLM rate limit exceeded [provider=%s, model=%s, latency=%.2fms]",
+                "LLM rate limit exceeded [provider=%s, model=%s, latency=%.2fms]: %s",
                 self._provider,
                 self._model,
                 latency_ms,
+                exc,
             )
             raise LLMRateLimitException(
-                message=f"LLM rate limit exceeded for provider '{self._provider}': {exc}",
+                message="LLM provider rate limit exceeded. Please try again later.",
                 details={"provider": self._provider, "model": self._model},
             ) from exc
 
@@ -162,13 +179,14 @@ class LiteLLMClient(LLMClient):
         ) as exc:
             latency_ms = (time.perf_counter() - start_time) * 1000
             logger.error(
-                "LLM connection error [provider=%s, model=%s, latency=%.2fms]",
+                "LLM connection error [provider=%s, model=%s, latency=%.2fms]: %s",
                 self._provider,
                 self._model,
                 latency_ms,
+                exc,
             )
             raise LLMConnectionException(
-                message=f"LLM connection error for provider '{self._provider}': {exc}",
+                message="Failed to connect to LLM provider. Please try again later.",
                 details={"provider": self._provider, "model": self._model},
             ) from exc
 
@@ -182,24 +200,6 @@ class LiteLLMClient(LLMClient):
                 exc,
             )
             raise LLMException(
-                message=f"LLM operation failed for provider '{self._provider}': {exc}",
+                message="An error occurred while processing the LLM request.",
                 details={"provider": self._provider, "model": self._model},
             ) from exc
-
-    async def health_check(self) -> bool:
-        """Verify client reachability to the configured provider.
-
-        Returns:
-            bool: True if the provider is responsive, False otherwise.
-        """
-        try:
-            await self.generate_response(prompt="ping", max_tokens=1)
-            return True
-        except Exception as exc:
-            logger.warning(
-                "LLM health check failed [provider=%s, model=%s]: %s",
-                self._provider,
-                self._model,
-                exc,
-            )
-            return False

@@ -8,7 +8,7 @@ class LLMException(ExternalServiceException):
 
     def __init__(
         self,
-        message: str = "LLM provider operation failed.",
+        message: str = "An error occurred while processing the LLM request.",
         status_code: int = 502,
         details: Optional[Union[Dict[str, Any], list]] = None,
     ) -> None:
@@ -24,7 +24,7 @@ class LLMAuthenticationException(LLMException):
 
     def __init__(
         self,
-        message: str = "LLM authentication failed. Check API key configuration.",
+        message: str = "LLM provider authentication failed. Please check configured credentials.",
         details: Optional[Union[Dict[str, Any], list]] = None,
     ) -> None:
         super().__init__(
@@ -39,7 +39,7 @@ class LLMRateLimitException(LLMException):
 
     def __init__(
         self,
-        message: str = "LLM rate limit or quota exceeded.",
+        message: str = "LLM provider rate limit exceeded. Please try again later.",
         details: Optional[Union[Dict[str, Any], list]] = None,
     ) -> None:
         super().__init__(
@@ -54,7 +54,7 @@ class LLMConnectionException(LLMException):
 
     def __init__(
         self,
-        message: str = "Failed to connect to LLM provider.",
+        message: str = "Failed to connect to LLM provider. Please try again later.",
         details: Optional[Union[Dict[str, Any], list]] = None,
     ) -> None:
         super().__init__(
