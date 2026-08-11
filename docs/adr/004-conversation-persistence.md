@@ -10,32 +10,42 @@ As we lay the foundation for a future personal intelligence assistant, we need a
 
 ## Decision
 
-We decide to implement relational conversation persistence in PostgreSQL using SQLAlchemy 2.x (asyncpg) and Alembic migrations.
+We decide to implement relational conversation persistence in PostgreSQL using SQLAlchemy 2.x (asyncpg) and Alembic migrations, following strict repository abstraction principles.
 
 ### Key Architectural Choices
 
-1. **Relational Database (PostgreSQL)**
-   - **Rationale**: PostgreSQL provides ACID compliance, strong data integrity, efficient indexing, and native support for UUIDs and JSON/array primitives. It is the industry standard for reliable relational storage and can seamlessly co-locate vector extensions (e.g. `pgvector`) in future phases.
+1. **Repository Abstraction (`ConversationRepository` ABC)**
+   - **Rationale**: `ChatService` depends exclusively on the `ConversationRepository` Abstract Base Class interface, not on concrete SQLAlchemy or database session classes. The concrete `SQLAlchemyConversationRepository` is constructed by FastAPI's dependency injection layer.
+   - **Dependency Graph**: `ChatService` ──► `ConversationRepository` (ABC) ◄── `SQLAlchemyConversationRepository` ──► `AsyncSession`.
 
 2. **Entity Separation: `Conversation` and `Message`**
-   - **Rationale**: Decoupling the conversation thread from individual messages enforces a 1-to-many relationship (`Conversation` 1 ──< `Message`). This allows independent message querying, pagination, indexing, soft-deletions, and metadata tracking per conversation without mutating monolithic JSON documents.
+   - **Rationale**: Decoupling the conversation thread from individual messages enforces a 1-to-many relationship (`Conversation` 1 ──< `Message`). This allows independent message querying, pagination, indexing, soft-deletions, and metadata tracking per conversation.
 
-3. **Role Enforcement (`user`, `assistant`, `system`)**
-   - **Rationale**: Messages use a constrained `MessageRole` Enum to enforce provider-independent chat message roles strictly at both the application and database schema layers.
+3. **Last Activity Timestamp Tracking (`Conversation.updated_at`)**
+   - **Rationale**: Every call to `add_message()` explicitly updates the parent `Conversation.updated_at` timestamp. This ensures `updated_at` reflects the true last activity timestamp of the conversation thread.
 
-4. **Chronological Message Ordering**
-   - **Rationale**: Queries retrieve messages ordered by `created_at ASC` backed by a compound index `(conversation_id, created_at)`. This guarantees chronological context ordering when feeding history back to the LLM abstraction.
+4. **Explicit Transaction Execution Strategy**
+   - **Rationale**: When processing a chat request:
+     1. Resolve or create `Conversation`.
+     2. Retrieve stored messages in chronological order.
+     3. **Persist user message**: Commit the user message to history *before* invoking the LLM.
+     4. **Invoke LLM**: Call `LLMClient.generate_response(messages)`.
+     5. **Persist assistant response**: Commit the assistant message to history if the LLM request succeeds.
+     6. **Fallback on Failure**: If the LLM request fails (raises `LLMException`), the user message remains recorded as an attempted request, but no assistant message is created.
 
-5. **Postponement of Semantic Memory & Vector Embeddings**
-   - **Rationale**: Raw conversation history stores *episodic stream data*, not extracted *semantic knowledge*. Semantic memory extraction, vector embeddings, and retrieval-augmented generation (RAG) are intentionally postponed to future sprints. Storing clean relational messages now establishes the raw data source required for future offline indexing and background extraction pipelines.
+5. **Authentication & Multi-Tenant Extensibility (`user_id`)**
+   - **Rationale**: The application currently has no user identity or authentication system. Conversation ownership is explicitly deferred. However, repository method signatures include an optional `user_id: Optional[str] = None` parameter (`create_conversation(user_id)`, `get_conversation(conversation_id, user_id)`) so user ownership can later be enforced without breaking interface contracts.
+
+6. **Postponement of Semantic Memory & Vector Embeddings**
+   - **Rationale**: Raw conversation history stores *episodic stream data*, not extracted *semantic knowledge*. Semantic memory extraction, vector embeddings, and retrieval-augmented generation (RAG) are intentionally postponed to future sprints.
 
 ## Consequences
 
 ### Positive
 - Strict separation of API, service, repository, and LLM abstraction layers.
-- Fast, indexed message retrieval for active chat threads.
-- Clean database migrations using Alembic without runtime `create_all()` side effects.
-- Future-proof foundation for semantic memory extraction and vector search extensions (`pgvector`).
+- `ChatService` can be tested in memory using fake/mock repository implementations without database setup.
+- Updated conversation timestamps accurately reflect last activity.
+- Future-proof signature design for user ownership and multi-tenancy.
 
 ### Limitations & Future Work
 - **Authentication / Multi-Tenancy**: Current endpoints operate without user ownership boundaries. User authentication and multi-tenant authorization will be enforced prior to production deployment.

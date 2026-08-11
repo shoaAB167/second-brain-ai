@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from personal_ai.db.repositories.conversation_repository import ConversationRepository
+from personal_ai.db.repositories import (
+    ConversationRepository,
+    SQLAlchemyConversationRepository,
+)
 from personal_ai.db.session import get_db_session
 from personal_ai.llm import LLMClient, get_llm_client
 from personal_ai.models.chat import ChatRequest, ChatResponse
@@ -13,15 +16,15 @@ router = APIRouter()
 def get_conversation_repository(
     session: AsyncSession = Depends(get_db_session),
 ) -> ConversationRepository:
-    """Dependency provider for ConversationRepository."""
-    return ConversationRepository(session=session)
+    """Dependency provider constructing concrete SQLAlchemyConversationRepository as ConversationRepository abstraction."""
+    return SQLAlchemyConversationRepository(session=session)
 
 
 def get_chat_service(
     llm_client: LLMClient = Depends(get_llm_client),
     conversation_repo: ConversationRepository = Depends(get_conversation_repository),
 ) -> ChatService:
-    """Dependency provider for ChatService."""
+    """Dependency provider for ChatService, injecting repository and LLM abstractions."""
     return ChatService(llm_client=llm_client, conversation_repo=conversation_repo)
 
 

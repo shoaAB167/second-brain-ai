@@ -1,13 +1,16 @@
 from unittest.mock import AsyncMock, MagicMock
 import uuid
 
-pytest = __import__("pytest")
-pytest_asyncio = __import__("pytest_asyncio")
+import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from personal_ai.core.exceptions import AppException
 from personal_ai.db.models import Base, MessageRole
-from personal_ai.db.repositories.conversation_repository import ConversationRepository
+from personal_ai.db.repositories import (
+    ConversationRepository,
+    SQLAlchemyConversationRepository,
+)
 from personal_ai.llm import LLMClient, LLMException, LLMMessage, LLMResponse
 from personal_ai.models.chat import ChatRequest
 from personal_ai.services.chat_service import ChatService
@@ -30,7 +33,7 @@ async def db_session() -> AsyncSession:
 @pytest.mark.asyncio
 async def test_chat_service_creates_conversation_when_id_absent(db_session: AsyncSession) -> None:
     """Verify ChatService creates a new conversation when conversation_id is None."""
-    repo = ConversationRepository(session=db_session)
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
     mock_llm_client = MagicMock(spec=LLMClient)
     mock_llm_client.generate_response = AsyncMock(
         return_value=LLMResponse(
@@ -59,7 +62,7 @@ async def test_chat_service_creates_conversation_when_id_absent(db_session: Asyn
 @pytest.mark.asyncio
 async def test_chat_service_reuses_existing_conversation(db_session: AsyncSession) -> None:
     """Verify ChatService reuses existing conversation and passes history to LLM in order."""
-    repo = ConversationRepository(session=db_session)
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
     conversation = await repo.create_conversation()
 
     # Pre-populate history
@@ -103,7 +106,7 @@ async def test_chat_service_llm_failure_does_not_persist_assistant_message(
     db_session: AsyncSession,
 ) -> None:
     """Verify LLM failure leaves user message persisted but creates no assistant message."""
-    repo = ConversationRepository(session=db_session)
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
     conversation = await repo.create_conversation()
 
     mock_llm_client = MagicMock(spec=LLMClient)
@@ -130,7 +133,7 @@ async def test_chat_service_invalid_conversation_id_raises_404(
     db_session: AsyncSession,
 ) -> None:
     """Verify invalid/nonexistent conversation_id raises 404 AppException."""
-    repo = ConversationRepository(session=db_session)
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
     mock_llm_client = MagicMock(spec=LLMClient)
 
     service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
