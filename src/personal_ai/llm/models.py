@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -32,3 +32,15 @@ class LLMResponse(BaseModel):
     prompt_tokens: Optional[int] = Field(None, description="Number of tokens in the prompt.")
     completion_tokens: Optional[int] = Field(None, description="Number of tokens in the completion.")
     total_tokens: Optional[int] = Field(None, description="Total tokens consumed.")
+
+
+class LLMStreamChunk(BaseModel):
+    """Domain model representing a single streamed chunk from an LLM provider."""
+
+    content: str = Field(..., description="The partial text content of this chunk.")
+    finish_reason: Optional[str] = Field(
+        default=None, description="Completion finish reason (e.g. 'stop', 'length') if finished."
+    )
+    usage: Optional[Dict[str, int]] = Field(
+        default=None, description="Optional token usage metrics if provided in final chunk."
+    )

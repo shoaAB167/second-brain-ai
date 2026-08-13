@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Optional
 import uuid
 
@@ -29,8 +30,28 @@ class ChatResponse(BaseModel):
     conversation_id: uuid.UUID = Field(..., description="The conversation UUID.")
     response: str = Field(..., description="The generated text response from the LLM.")
     provider: str = Field(..., description="The LLM provider used.")
-    model: str = Field(..., description="The LLM model used.")
+    model: str = Field(..., description="The specific model used.")
     latency_ms: float = Field(..., description="Execution latency in milliseconds.")
     prompt_tokens: Optional[int] = Field(default=None, description="Prompt tokens used.")
     completion_tokens: Optional[int] = Field(default=None, description="Completion tokens used.")
     total_tokens: Optional[int] = Field(default=None, description="Total tokens used.")
+
+
+class StreamEventType(str, Enum):
+    """Event types for Server-Sent Events (SSE) streaming."""
+
+    TOKEN = "token"
+    DONE = "done"
+    ERROR = "error"
+
+
+class ChatStreamEvent(BaseModel):
+    """Schema for individual SSE streaming events sent to client."""
+
+    type: StreamEventType = Field(..., description="Event type: token, done, or error.")
+    content: Optional[str] = Field(default=None, description="Text chunk for token event.")
+    message: Optional[str] = Field(default=None, description="Error message for error event.")
+
+    def to_sse(self) -> str:
+        """Format event model as a Server-Sent Events (SSE) data line."""
+        return f"data: {self.model_dump_json(exclude_none=True)}\n\n"

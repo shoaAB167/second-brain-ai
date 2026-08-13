@@ -12,6 +12,7 @@ from personal_ai.llm import (
     LLMProvider,
     LLMRateLimitException,
     LLMResponse,
+    LLMStreamChunk,
     get_llm_client,
 )
 from personal_ai.llm.litellm_client import LiteLLMClient
@@ -95,6 +96,49 @@ async def test_generate_response_returns_llm_response() -> None:
             {"role": "system", "content": "You are a helpful AI"},
             {"role": "user", "content": "Hello"},
         ]
+
+
+@pytest.mark.asyncio
+async def test_stream_response_yields_llm_stream_chunks() -> None:
+    """Verify stream_response yields structured LLMStreamChunk objects."""
+
+    class MockAsyncStream:
+        def __init__(self, chunks):
+            self._chunks = chunks
+
+        def __aiter__(self):
+            self._iter = iter(self._chunks)
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    chunk1 = MagicMock()
+    chunk1.choices = [MagicMock(delta=MagicMock(content="Hello"), finish_reason=None)]
+    chunk1.usage = None
+
+    chunk2 = MagicMock()
+    chunk2.choices = [MagicMock(delta=MagicMock(content=" world"), finish_reason="stop")]
+    chunk2.usage = None
+
+    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
+        mock_acompletion.return_value = MockAsyncStream([chunk1, chunk2])
+
+        client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
+        messages = [LLMMessage(role="user", content="Hello")]
+
+        stream_gen = client.stream_response(messages=messages)
+        chunks = [c async for c in stream_gen]
+
+        assert len(chunks) == 2
+        assert isinstance(chunks[0], LLMStreamChunk)
+        assert chunks[0].content == "Hello"
+        assert chunks[0].finish_reason is None
+        assert chunks[1].content == " world"
+        assert chunks[1].finish_reason == "stop"
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,13 @@ from personal_ai.db.repositories import (
     ConversationRepository,
     SQLAlchemyConversationRepository,
 )
-from personal_ai.llm import LLMClient, LLMException, LLMMessage, LLMResponse
+from personal_ai.llm import (
+    LLMClient,
+    LLMException,
+    LLMMessage,
+    LLMResponse,
+    LLMStreamChunk,
+)
 from personal_ai.models.chat import ChatRequest
 from personal_ai.services.chat_service import ChatService
 
@@ -145,3 +151,72 @@ async def test_chat_service_invalid_conversation_id_raises_404(
         )
 
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_chat_service_streaming_success(db_session: AsyncSession) -> None:
+    """Verify process_chat_stream yields chunks in order, emits done event, and persists exactly ONE assistant message."""
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
+    conversation = await repo.create_conversation()
+
+    async def mock_stream_gen(*args, **kwargs):
+        yield LLMStreamChunk(content="Hello")
+        yield LLMStreamChunk(content=" world")
+
+    mock_llm_client = MagicMock(spec=LLMClient)
+    mock_llm_client.stream_response = AsyncMock(side_effect=mock_stream_gen)
+
+    service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
+    events = [
+        event
+        async for event in service.process_chat_stream(
+            ChatRequest(conversation_id=conversation.id, message="Hi")
+        )
+    ]
+
+    assert len(events) == 3
+    assert 'data: {"type":"token","content":"Hello"}' in events[0]
+    assert 'data: {"type":"token","content":" world"}' in events[1]
+    assert 'data: {"type":"done"}' in events[2]
+
+    # Verify database persistence: User message + EXACTLY ONE assistant message containing accumulated content
+    messages = await repo.get_conversation_messages(conversation.id)
+    assert len(messages) == 2
+    assert messages[0].role == MessageRole.USER
+    assert messages[0].content == "Hi"
+    assert messages[1].role == MessageRole.ASSISTANT
+    assert messages[1].content == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_streaming_failure_preserves_user_message_and_skips_assistant(
+    db_session: AsyncSession,
+) -> None:
+    """Verify streaming failure yields error event, preserves user message, and persists NO assistant message."""
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
+    conversation = await repo.create_conversation()
+
+    async def mock_failed_stream_gen(*args, **kwargs):
+        yield LLMStreamChunk(content="Partial text")
+        raise LLMException("Stream error mid-flight")
+
+    mock_llm_client = MagicMock(spec=LLMClient)
+    mock_llm_client.stream_response = AsyncMock(side_effect=mock_failed_stream_gen)
+
+    service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
+    events = [
+        event
+        async for event in service.process_chat_stream(
+            ChatRequest(conversation_id=conversation.id, message="Failing stream prompt")
+        )
+    ]
+
+    assert len(events) == 2
+    assert 'data: {"type":"token","content":"Partial text"}' in events[0]
+    assert 'data: {"type":"error","message":"Unable to generate response."}' in events[1]
+
+    # Verify DB persistence: User message is preserved, but NO assistant message was saved
+    messages = await repo.get_conversation_messages(conversation.id)
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.USER
+    assert messages[0].content == "Failing stream prompt"

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from personal_ai.db.repositories import (
@@ -32,11 +33,32 @@ def get_chat_service(
     "/chat",
     response_model=ChatResponse,
     summary="Send Chat Message",
-    description="Processes a prompt message with conversation history using the configured LLM backend.",
+    description="Processes a prompt message with conversation history synchronously.",
 )
 async def chat(
     request: ChatRequest,
     chat_service: ChatService = Depends(get_chat_service),
 ) -> ChatResponse:
-    """Execute chat completion request through ChatService."""
+    """Execute synchronous chat completion request through ChatService."""
     return await chat_service.process_chat(request)
+
+
+@router.post(
+    "/chat/stream",
+    summary="Send Chat Message (Streaming)",
+    description="Streams chat completions using Server-Sent Events (SSE) in real time.",
+)
+async def chat_stream(
+    request: ChatRequest,
+    chat_service: ChatService = Depends(get_chat_service),
+) -> StreamingResponse:
+    """Execute streaming chat completion request returning Server-Sent Events (SSE)."""
+    return StreamingResponse(
+        chat_service.process_chat_stream(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
