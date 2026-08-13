@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, List
+from typing import Any, AsyncIterator, List
 
 from personal_ai.llm.models import LLMMessage, LLMResponse, LLMStreamChunk
 
@@ -36,19 +36,19 @@ class LLMClient(ABC):
         pass
 
     @abstractmethod
-    async def stream_response(
+    def stream_response(
         self,
         messages: List[LLMMessage],
         **kwargs: Any,
-    ) -> AsyncGenerator[LLMStreamChunk, None]:
-        """Stream response chunks from the LLM provider as an async generator.
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """Stream response chunks from the LLM provider as an async iterator.
 
         Args:
             messages: List of structured domain messages (system, user, assistant).
             **kwargs: Optional execution hyper-parameters (e.g., temperature, max_tokens).
 
-        Yields:
-            LLMStreamChunk: Domain chunk objects containing partial text content and metadata.
+        Returns:
+            AsyncIterator[LLMStreamChunk]: Async iterator yielding domain chunk objects.
 
         Raises:
             LLMException: Base exception for any LLM generation failure.
