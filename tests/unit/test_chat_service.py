@@ -12,6 +12,7 @@ from personal_ai.db.repositories import (
     SQLAlchemyConversationRepository,
 )
 from personal_ai.llm import (
+    LLMAuthenticationException,
     LLMClient,
     LLMException,
     LLMMessage,
@@ -164,7 +165,7 @@ async def test_chat_service_streaming_success(db_session: AsyncSession) -> None:
         yield LLMStreamChunk(content=" world")
 
     mock_llm_client = MagicMock(spec=LLMClient)
-    mock_llm_client.stream_response = AsyncMock(side_effect=mock_stream_gen)
+    mock_llm_client.stream_response = MagicMock(side_effect=mock_stream_gen)
 
     service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
     events = [
@@ -198,10 +199,10 @@ async def test_chat_service_streaming_failure_preserves_user_message_and_skips_a
 
     async def mock_failed_stream_gen(*args, **kwargs):
         yield LLMStreamChunk(content="Partial text")
-        raise LLMException("Stream error mid-flight")
+        raise LLMAuthenticationException("LLM provider authentication failed. Please check configured API key.")
 
     mock_llm_client = MagicMock(spec=LLMClient)
-    mock_llm_client.stream_response = AsyncMock(side_effect=mock_failed_stream_gen)
+    mock_llm_client.stream_response = MagicMock(side_effect=mock_failed_stream_gen)
 
     service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
     events = [
@@ -213,7 +214,7 @@ async def test_chat_service_streaming_failure_preserves_user_message_and_skips_a
 
     assert len(events) == 2
     assert 'data: {"type":"token","content":"Partial text"}' in events[0]
-    assert 'data: {"type":"error","message":"Unable to generate response."}' in events[1]
+    assert 'data: {"type":"error","message":"LLM provider authentication failed. Please check configured API key."}' in events[1]
 
     # Verify DB persistence: User message is preserved, but NO assistant message was saved
     messages = await repo.get_conversation_messages(conversation.id)

@@ -1,9 +1,16 @@
+import asyncio
 from typing import AsyncGenerator, List
 
 from personal_ai.core.exceptions import AppException
 from personal_ai.core.logger import get_logger
 from personal_ai.db.repositories.base import ConversationRepository
 from personal_ai.llm.client import LLMClient
+from personal_ai.llm.exceptions import (
+    LLMAuthenticationException,
+    LLMConnectionException,
+    LLMException,
+    LLMRateLimitException,
+)
 from personal_ai.llm.models import LLMMessage
 from personal_ai.models.chat import (
     ChatRequest,
@@ -128,10 +135,10 @@ class ChatService:
         7. ACCUMULATE RESPONSE: Collect partial token strings internally in memory.
         8. PERSIST ASSISTANT RESPONSE: Upon successful completion of stream, commit EXACTLY ONE
            assistant message with the full accumulated content to database history.
-        9. FALLBACK ON FAILURE: If streaming fails or encounters a provider exception:
+        9. FALLBACK ON FAILURE OR CANCELLATION:
            - User message remains recorded in database history.
            - NO assistant message is saved.
-           - Emits an SSE error payload `data: {"type":"error","message":"..."}\n\n`.
+           - Emits sanitized SSE error payload for domain/runtime exceptions.
         """
         # 1. Resolve or create conversation thread
         if request.conversation_id:
@@ -140,7 +147,7 @@ class ChatService:
             )
             if not conversation:
                 logger.warning(
-                    "Requested conversation not found [conversation_id=%s]",
+                    "Requested conversation not found for streaming [conversation_id=%s]",
                     request.conversation_id,
                 )
                 yield ChatStreamEvent(
@@ -188,14 +195,9 @@ class ChatService:
 
         accumulated_chunks: List[str] = []
 
-        # 5. Call LLMClient.stream_response() and yield tokens as they arrive
+        # 5. Call LLMClient.stream_response() and stream tokens
         try:
-            stream_res = self._llm_client.stream_response(messages=history)
-            if hasattr(stream_res, "__await__"):
-                stream_gen = await stream_res
-            else:
-                stream_gen = stream_res
-
+            stream_gen = self._llm_client.stream_response(messages=history)
             async for chunk in stream_gen:
                 if chunk.content:
                     accumulated_chunks.append(chunk.content)
@@ -215,10 +217,42 @@ class ChatService:
             # 7. Emit done event
             yield ChatStreamEvent(type=StreamEventType.DONE).to_sse()
 
-        except Exception as exc:
-            logger.error("Error during chat streaming: %s", exc)
-            # Do NOT persist assistant message on stream failure
+        except LLMAuthenticationException as exc:
+            logger.error("LLM authentication failed during stream [conversation_id=%s]: %s", conversation.id, exc)
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
-                message="Unable to generate response.",
+                message=exc.message,
+            ).to_sse()
+
+        except LLMRateLimitException as exc:
+            logger.error("LLM rate limit exceeded during stream [conversation_id=%s]: %s", conversation.id, exc)
+            yield ChatStreamEvent(
+                type=StreamEventType.ERROR,
+                message=exc.message,
+            ).to_sse()
+
+        except LLMConnectionException as exc:
+            logger.error("LLM connection error during stream [conversation_id=%s]: %s", conversation.id, exc)
+            yield ChatStreamEvent(
+                type=StreamEventType.ERROR,
+                message=exc.message,
+            ).to_sse()
+
+        except LLMException as exc:
+            logger.error("LLM domain exception during stream [conversation_id=%s]: %s", conversation.id, exc)
+            yield ChatStreamEvent(
+                type=StreamEventType.ERROR,
+                message=exc.message,
+            ).to_sse()
+
+        except asyncio.CancelledError:
+            logger.warning("Chat stream cancelled by client [conversation_id=%s]", conversation.id)
+            # Re-raise cancellation without persisting assistant message
+            raise
+
+        except Exception as exc:
+            logger.error("Unexpected runtime error during chat stream [conversation_id=%s]: %s", conversation.id, exc)
+            yield ChatStreamEvent(
+                type=StreamEventType.ERROR,
+                message="An unexpected error occurred during chat streaming.",
             ).to_sse()

@@ -96,7 +96,7 @@ def test_post_chat_stream_returns_text_event_stream() -> None:
         yield LLMStreamChunk(content=" streaming")
 
     mock_llm_client = MagicMock(spec=LLMClient)
-    mock_llm_client.stream_response = AsyncMock(side_effect=mock_stream_gen)
+    mock_llm_client.stream_response = MagicMock(side_effect=mock_stream_gen)
     app.dependency_overrides[get_llm_client] = lambda: mock_llm_client
 
     payload = {"message": "Stream hello"}
