@@ -57,7 +57,7 @@ class LiteLLMClient(LLMClient):
         elif provider == "anthropic":
             return self._settings.anthropic_api_key
         elif provider in ("gemini", "google"):
-            return self._settings.google_api_key
+            return self._settings.gemini_api_key or self._settings.google_api_key
         elif provider == "deepseek":
             return self._settings.deepseek_api_key
         elif provider == "openrouter":

@@ -1,6 +1,6 @@
 """Create conversations and messages tables
 
-Revision ID: 001_create_conversations_and_messages
+Revision ID: 001_conversations_and_messages
 Revises: 
 Create Date: 2026-08-11 00:00:00.000000
 
@@ -9,19 +9,24 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision: str = "001_create_conversations_and_messages"
+revision: str = "001_conversations_and_messages"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Create Enum type for message roles
-    role_enum = sa.Enum("user", "assistant", "system", name="messagerole_enum")
-    role_enum.create(op.get_bind(), checkfirst=True)
+    # Explicitly create Enum type checkfirst
+    sa.Enum("user", "assistant", "system", name="messagerole_enum").create(
+        op.get_bind(), checkfirst=True
+    )
+    role_enum = postgresql.ENUM(
+        "user", "assistant", "system", name="messagerole_enum", create_type=False
+    )
 
     # Create conversations table
     op.create_table(
@@ -61,5 +66,6 @@ def downgrade() -> None:
     op.drop_table("messages")
     op.drop_table("conversations")
 
-    role_enum = sa.Enum("user", "assistant", "system", name="messagerole_enum")
-    role_enum.drop(op.get_bind(), checkfirst=True)
+    sa.Enum("user", "assistant", "system", name="messagerole_enum").drop(
+        op.get_bind(), checkfirst=True
+    )

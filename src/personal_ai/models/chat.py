@@ -7,12 +7,19 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     """Schema for incoming chat API request."""
 
-    message: str = Field(..., min_length=1, description="The user prompt or message.")
+    message: str = Field(
+        ...,
+        min_length=1,
+        description="The user prompt or message.",
+        json_schema_extra={"example": "Hello"},
+    )
     conversation_id: Optional[uuid.UUID] = Field(
-        default=None, description="Optional UUID of an existing conversation thread."
+        default=None,
+        description="Optional UUID of an existing conversation thread. Omit to start a new conversation.",
     )
     system_prompt: Optional[str] = Field(
-        default=None, description="Optional system instruction for guiding model response."
+        default=None,
+        description="Optional system instruction for guiding model response.",
     )
 
 
