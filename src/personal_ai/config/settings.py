@@ -21,9 +21,13 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = None
     deepseek_api_key: Optional[str] = None
     openrouter_api_key: Optional[str] = None
     ollama_api_base: Optional[str] = "http://localhost:11434"
+
+    # Database Settings
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/second_brain_ai"
 
     log_level: str = "INFO"
 

@@ -6,7 +6,7 @@ from personal_ai.llm.exceptions import (
     LLMRateLimitException,
 )
 from personal_ai.llm.litellm_client import LiteLLMClient
-from personal_ai.llm.models import LLMProvider, LLMResponse
+from personal_ai.llm.models import LLMMessage, LLMProvider, LLMResponse
 
 
 def get_llm_client() -> LLMClient:
@@ -23,6 +23,7 @@ def get_llm_client() -> LLMClient:
 __all__ = [
     "LLMClient",
     "get_llm_client",
+    "LLMMessage",
     "LLMProvider",
     "LLMResponse",
     "LLMException",

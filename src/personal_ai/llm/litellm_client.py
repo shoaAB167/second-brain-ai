@@ -12,7 +12,7 @@ from personal_ai.llm.exceptions import (
     LLMException,
     LLMRateLimitException,
 )
-from personal_ai.llm.models import LLMResponse
+from personal_ai.llm.models import LLMMessage, LLMResponse
 
 logger = get_logger(__name__)
 
@@ -57,7 +57,7 @@ class LiteLLMClient(LLMClient):
         elif provider == "anthropic":
             return self._settings.anthropic_api_key
         elif provider in ("gemini", "google"):
-            return self._settings.google_api_key
+            return self._settings.gemini_api_key or self._settings.google_api_key
         elif provider == "deepseek":
             return self._settings.deepseek_api_key
         elif provider == "openrouter":
@@ -72,15 +72,13 @@ class LiteLLMClient(LLMClient):
 
     async def generate_response(
         self,
-        prompt: str,
-        system_prompt: Optional[str] = None,
+        messages: List[LLMMessage],
         **kwargs: Any,
     ) -> LLMResponse:
         """Generate text response using LiteLLM.
 
         Args:
-            prompt: User prompt text.
-            system_prompt: Optional system instruction message.
+            messages: List of domain LLMMessage objects.
             **kwargs: Extra parameters passed to completion engine.
 
         Returns:
@@ -93,15 +91,13 @@ class LiteLLMClient(LLMClient):
             LLMException: On general execution errors.
         """
         model_name = self._format_model_name()
-        messages: List[Dict[str, str]] = []
-
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        formatted_messages = [
+            {"role": msg.role, "content": msg.content} for msg in messages
+        ]
 
         request_kwargs: Dict[str, Any] = dict(kwargs)
         request_kwargs["model"] = model_name
-        request_kwargs["messages"] = messages
+        request_kwargs["messages"] = formatted_messages
 
         if self._api_key:
             request_kwargs["api_key"] = self._api_key
@@ -110,9 +106,10 @@ class LiteLLMClient(LLMClient):
             request_kwargs.setdefault("api_base", self._settings.ollama_api_base)
 
         logger.info(
-            "Sending LLM request [provider=%s, model=%s]",
+            "Sending LLM request [provider=%s, model=%s, messages_count=%d]",
             self._provider,
             self._model,
+            len(messages),
         )
 
         start_time = time.perf_counter()

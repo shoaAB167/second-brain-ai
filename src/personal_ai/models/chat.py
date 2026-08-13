@@ -1,4 +1,5 @@
 from typing import Optional
+import uuid
 
 from pydantic import BaseModel, Field
 
@@ -6,15 +7,26 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     """Schema for incoming chat API request."""
 
-    message: str = Field(..., min_length=1, description="The user prompt or message.")
+    message: str = Field(
+        ...,
+        min_length=1,
+        description="The user prompt or message.",
+        json_schema_extra={"example": "Hello"},
+    )
+    conversation_id: Optional[uuid.UUID] = Field(
+        default=None,
+        description="Optional UUID of an existing conversation thread. Omit to start a new conversation.",
+    )
     system_prompt: Optional[str] = Field(
-        default=None, description="Optional system instruction for guiding model response."
+        default=None,
+        description="Optional system instruction for guiding model response.",
     )
 
 
 class ChatResponse(BaseModel):
     """Schema for API chat response."""
 
+    conversation_id: uuid.UUID = Field(..., description="The conversation UUID.")
     response: str = Field(..., description="The generated text response from the LLM.")
     provider: str = Field(..., description="The LLM provider used.")
     model: str = Field(..., description="The LLM model used.")
