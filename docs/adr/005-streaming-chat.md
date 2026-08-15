@@ -18,21 +18,26 @@ We decide to implement streaming using **Server-Sent Events (SSE)** via HTTP (`P
    - **Rationale**: SSE is built natively on top of HTTP (`text/event-stream`), lightweight, unidirectional (server-to-client), firewall-friendly, and simple to consume in browsers via `EventSource` or `fetch()` body readers.
    - **Future Extensibility**: WebSockets remain a candidate if full bidirectional real-time communication (e.g. real-time audio streams or interactive agent control) is required in future sprints.
 
-2. **Provider-Independent Streaming Abstraction (`LLMClient.stream_response`)**
+2. **End-to-End `stream=True` Pipeline**
+   - **LLM Provider**: Invoked with `stream=True` via `litellm.acompletion`, causing the model to yield tokens as they are generated rather than pre-generating the full response.
+   - **Backend API**: FastAPI's `StreamingResponse` flushes yielded SSE token events (`data: {"type":"token","content":"..."}\n\n`) instantly over chunked HTTP.
+   - **Frontend Browser**: `fetch()` reads the stream using `response.body.getReader()` with `TextDecoder`, rendering tokens incrementally into UI state.
+
+3. **Provider-Independent Streaming Abstraction (`LLMClient.stream_response`)**
    - **Rationale**: `LLMClient` defines `stream_response(messages) -> AsyncGenerator[LLMStreamChunk, None]`.
    - `LLMStreamChunk` encapsulates content deltas, finish reasons, and usage metrics. Provider-specific stream objects (such as LiteLLM chunk iterators) are isolated strictly within `LiteLLMClient`.
 
-3. **Accumulated Assistant Message Persistence Strategy**
+4. **Accumulated Assistant Message Persistence Strategy**
    - **Rationale**: Chunks are streamed in real time to the client via SSE (`data: {"type":"token","content":"..."}\n\n`).
    - Token chunks are **not** persisted as individual database rows to avoid database write amplification.
    - The full response is accumulated in memory during the stream and persisted as **exactly one** assistant message to PostgreSQL upon successful completion.
 
-4. **Failure & Transaction Semantics**
+5. **Failure & Transaction Semantics**
    - **User Message**: Persisted to database history *before* invoking the LLM stream.
    - **Assistant Message**: Persisted *only after* the stream completes successfully.
    - **Stream Failures**: If provider errors occur mid-stream, an SSE error payload `data: {"type":"error","message":"..."}\n\n` is yielded. The user prompt remains preserved in database history as an attempted message, but no partial assistant message is created.
 
-5. **Resource Safety & Memory Tradeoffs**
+6. **Resource Safety & Memory Tradeoffs**
    - Tokens are forwarded to the HTTP response stream immediately without buffering the full response before outputting chunks.
    - Holding the accumulated string in memory for database persistence is lightweight for standard completions. If extremely large text payloads are introduced in future sprints, a chunked temporary persistence buffer strategy can be adopted.
 

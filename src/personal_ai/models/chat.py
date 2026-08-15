@@ -51,6 +51,9 @@ class ChatStreamEvent(BaseModel):
     type: StreamEventType = Field(..., description="Event type: token, done, or error.")
     content: Optional[str] = Field(default=None, description="Text chunk for token event.")
     message: Optional[str] = Field(default=None, description="Error message for error event.")
+    conversation_id: Optional[uuid.UUID] = Field(
+        default=None, description="The conversation UUID associated with this stream."
+    )
 
     def to_sse(self) -> str:
         """Format event model as a Server-Sent Events (SSE) data line."""

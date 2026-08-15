@@ -108,4 +108,5 @@ def test_post_chat_stream_returns_text_event_stream() -> None:
     body = response.text
     assert 'data: {"type":"token","content":"Hello"}' in body
     assert 'data: {"type":"token","content":" streaming"}' in body
-    assert 'data: {"type":"done"}' in body
+    assert '"type":"done"' in body
+    assert '"conversation_id"' in body
