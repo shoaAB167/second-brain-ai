@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Optional
 import uuid
 
 from sqlalchemy import Index, String, Text, DateTime, ForeignKey, Enum as SQLEnum, UUID
@@ -77,3 +78,38 @@ class Message(Base):
     __table_args__ = (
         Index("ix_messages_conversation_id_created_at", "conversation_id", "created_at"),
     )
+
+
+class ExperienceModel(Base):
+    """ORM Model representing a raw, uninterpreted life Experience record."""
+
+    __tablename__ = "experiences"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(
+        SQLEnum(
+            "CHAT", "FILE", "EMAIL", "CALENDAR", "GITHUB", "VOICE", "API", "MANUAL", "TOOL",
+            name="experiencesource_enum",
+            native_enum=True,
+        ),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        SQLEnum(
+            "RECEIVED", "PROCESSING", "PROCESSED", "FAILED",
+            name="experiencestatus_enum",
+            native_enum=True,
+        ),
+        nullable=False,
+        default="RECEIVED",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
