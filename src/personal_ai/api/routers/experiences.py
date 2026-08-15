@@ -30,15 +30,15 @@ def get_record_experience_use_case(
 @router.post(
     "/experiences",
     response_model=RecordExperienceResponse,
-    status_code=status.HTTP_202_ACCEPTED,
+    status_code=status.HTTP_201_CREATED,
     summary="Record Raw Experience",
-    description="Records an uninterpreted raw user experience observation. Returns HTTP 202 Accepted.",
+    description="Records an uninterpreted raw user experience observation. Returns HTTP 201 Created.",
 )
 async def record_experience(
     request: RecordExperienceRequest,
     use_case: RecordExperience = Depends(get_record_experience_use_case),
 ) -> RecordExperienceResponse:
-    """Execute RecordExperience use case returning HTTP 202 Accepted response."""
+    """Execute RecordExperience use case returning HTTP 201 Created response."""
     created_experience = await use_case.execute(
         content=request.content,
         source=request.source,

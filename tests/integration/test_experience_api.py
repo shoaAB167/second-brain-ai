@@ -33,8 +33,8 @@ def setup_experience_db(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(test_engine.dispose())
 
 
-def test_post_experience_returns_202_accepted_and_persists() -> None:
-    """Verify POST /api/v1/experiences returns HTTP 202 Accepted and persists Experience."""
+def test_post_experience_returns_201_created_and_persists() -> None:
+    """Verify POST /api/v1/experiences returns HTTP 201 Created and persists Experience."""
     raw_content = "I started learning FastAPI today."
     payload = {
         "content": raw_content,
@@ -43,7 +43,7 @@ def test_post_experience_returns_202_accepted_and_persists() -> None:
 
     response = client.post("/api/v1/experiences", json=payload)
 
-    assert response.status_code == 202
+    assert response.status_code == 201
     data = response.json()
 
     assert "experienceId" in data

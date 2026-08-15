@@ -28,7 +28,7 @@ class RecordExperienceRequest(BaseModel):
 
 
 class RecordExperienceResponse(BaseModel):
-    """Response payload for HTTP 202 Accepted Experience creation."""
+    """Response payload for HTTP 201 Created Experience creation."""
 
     experience_id: uuid.UUID = Field(
         ...,
