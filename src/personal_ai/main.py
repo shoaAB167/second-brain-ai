@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from personal_ai.api.router import api_router
 from personal_ai.config.settings import settings
@@ -14,6 +15,16 @@ def create_app() -> FastAPI:
         debug=settings.debug,
         lifespan=lifespan,
     )
+
+    # Configure CORS middleware
+    if settings.cors_origins:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # Register custom exception handlers
     application.add_exception_handler(AppException, app_exception_handler)  # type: ignore[arg-type]

@@ -178,7 +178,8 @@ async def test_chat_service_streaming_success(db_session: AsyncSession) -> None:
     assert len(events) == 3
     assert 'data: {"type":"token","content":"Hello"}' in events[0]
     assert 'data: {"type":"token","content":" world"}' in events[1]
-    assert 'data: {"type":"done"}' in events[2]
+    assert '"type":"done"' in events[2]
+    assert str(conversation.id) in events[2]
 
     # Verify database persistence: User message + EXACTLY ONE assistant message containing accumulated content
     messages = await repo.get_conversation_messages(conversation.id)
@@ -214,7 +215,8 @@ async def test_chat_service_streaming_failure_preserves_user_message_and_skips_a
 
     assert len(events) == 2
     assert 'data: {"type":"token","content":"Partial text"}' in events[0]
-    assert 'data: {"type":"error","message":"LLM provider authentication failed. Please check configured API key."}' in events[1]
+    assert '"type":"error"' in events[1]
+    assert "LLM provider authentication failed" in events[1]
 
     # Verify DB persistence: User message is preserved, but NO assistant message was saved
     messages = await repo.get_conversation_messages(conversation.id)

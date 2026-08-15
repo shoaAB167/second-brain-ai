@@ -214,14 +214,18 @@ class ChatService:
                 content=full_response_text,
             )
 
-            # 7. Emit done event
-            yield ChatStreamEvent(type=StreamEventType.DONE).to_sse()
+            # 7. Emit done event containing conversation_id
+            yield ChatStreamEvent(
+                type=StreamEventType.DONE,
+                conversation_id=conversation.id,
+            ).to_sse()
 
         except LLMAuthenticationException as exc:
             logger.error("LLM authentication failed during stream [conversation_id=%s]: %s", conversation.id, exc)
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
                 message=exc.message,
+                conversation_id=conversation.id,
             ).to_sse()
 
         except LLMRateLimitException as exc:
@@ -229,6 +233,7 @@ class ChatService:
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
                 message=exc.message,
+                conversation_id=conversation.id,
             ).to_sse()
 
         except LLMConnectionException as exc:
@@ -236,6 +241,7 @@ class ChatService:
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
                 message=exc.message,
+                conversation_id=conversation.id,
             ).to_sse()
 
         except LLMException as exc:
@@ -243,6 +249,7 @@ class ChatService:
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
                 message=exc.message,
+                conversation_id=conversation.id,
             ).to_sse()
 
         except asyncio.CancelledError:
@@ -255,4 +262,5 @@ class ChatService:
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
                 message="An unexpected error occurred during chat streaming.",
+                conversation_id=conversation.id,
             ).to_sse()
