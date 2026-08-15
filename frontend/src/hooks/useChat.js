@@ -10,16 +10,24 @@ export function useChat() {
   const [error, setError] = useState(null);
 
   const abortControllerRef = useRef(null);
+  const requestIdRef = useRef(0);
 
   // Restore conversation_id from localStorage on mount
   useEffect(() => {
-    const savedId = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (savedId) {
-      setConversationId(savedId);
+    try {
+      const savedId = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (savedId) {
+        setConversationId(savedId);
+      }
+    } catch {
+      // Ignore storage errors safely in restricted environments
     }
   }, []);
 
   const startNewChat = useCallback(() => {
+    // Invalidate any ongoing or late request callbacks
+    requestIdRef.current++;
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -29,15 +37,21 @@ export function useChat() {
     setConversationId(null);
     setIsStreaming(false);
     setError(null);
-    localStorage.removeItem(LOCAL_STORAGE_KEY);
+    try {
+      localStorage.removeItem(LOCAL_STORAGE_KEY);
+    } catch {
+      // Ignore storage errors safely
+    }
   }, []);
 
   const sendMessage = useCallback(
     async (text) => {
-      const trimmed = text.trim();
+      const trimmed = text ? text.trim() : "";
       if (!trimmed || isStreaming) return;
 
-      // Abort any ongoing request before starting a new one
+      // Invalidate previous requests and track generation for current request
+      const currentRequestId = ++requestIdRef.current;
+
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -67,39 +81,60 @@ export function useChat() {
 
       const currentConvId = conversationId;
 
-      await streamChatResponse(
-        {
-          message: trimmed,
-          conversation_id: currentConvId,
-        },
-        (event) => {
-          if (event.type === "token" && event.content) {
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMsgId
-                  ? { ...msg, content: msg.content + event.content }
-                  : msg
-              )
-            );
-          } else if (event.type === "done") {
-            setIsStreaming(false);
-            if (event.conversation_id) {
-              setConversationId(event.conversation_id);
-              localStorage.setItem(LOCAL_STORAGE_KEY, event.conversation_id);
+      try {
+        await streamChatResponse(
+          {
+            message: trimmed,
+            conversation_id: currentConvId,
+          },
+          (event) => {
+            // Ignore events if a new request or new chat was started
+            if (currentRequestId !== requestIdRef.current) return;
+
+            if (event.type === "token" && event.content) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMsgId
+                    ? { ...msg, content: msg.content + event.content }
+                    : msg
+                )
+              );
+            } else if (event.type === "done") {
+              setIsStreaming(false);
+              if (event.conversation_id) {
+                setConversationId(event.conversation_id);
+                try {
+                  localStorage.setItem(LOCAL_STORAGE_KEY, event.conversation_id);
+                } catch {
+                  // Ignore storage errors safely
+                }
+              }
+            } else if (event.type === "error") {
+              setIsStreaming(false);
+              setError(
+                event.message || "An error occurred while streaming response."
+              );
             }
-          } else if (event.type === "error") {
+          },
+          (errorMessage) => {
+            // Ignore errors if a new request or new chat was started
+            if (currentRequestId !== requestIdRef.current) return;
+
             setIsStreaming(false);
-            setError(
-              event.message || "An error occurred while streaming response."
-            );
-          }
-        },
-        (errorMessage) => {
+            setError(errorMessage);
+          },
+          controller.signal
+        );
+      } catch (err) {
+        if (currentRequestId !== requestIdRef.current) return;
+        if (err.name !== "AbortError") {
+          setError("An unexpected network error occurred.");
+        }
+      } finally {
+        if (currentRequestId === requestIdRef.current) {
           setIsStreaming(false);
-          setError(errorMessage);
-        },
-        controller.signal
-      );
+        }
+      }
     },
     [conversationId, isStreaming]
   );

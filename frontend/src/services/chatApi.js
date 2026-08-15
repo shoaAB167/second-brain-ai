@@ -3,7 +3,8 @@ const API_BASE_URL =
 
 /**
  * Robust SSE Stream parser function reading POST response streams in JavaScript.
- * Handles split network chunks, multi-byte UTF-8 boundaries, and multiple data events.
+ * Handles split network chunks, CRLF/LF event boundaries (\r\n\r\n and \n\n),
+ * multi-byte UTF-8 boundaries, multiple data events per chunk, and safe error handling.
  */
 export async function streamChatResponse(
   payload,
@@ -57,17 +58,30 @@ export async function streamChatResponse(
         break;
       }
 
-      // Decode bytes using stream: true to hold partial UTF-8 multi-byte characters
+      // Decode bytes using stream: true to preserve partial UTF-8 multi-byte characters
       buffer += decoder.decode(value, { stream: true });
 
-      // Process complete SSE event blocks separated by double newlines (\n\n)
-      let boundaryIndex;
-      while ((boundaryIndex = buffer.indexOf("\n\n")) !== -1) {
+      // Process complete SSE event blocks separated by \r\n\r\n or \n\n
+      while (true) {
+        const match = buffer.match(/\r?\n\r?\n/);
+        if (!match) break;
+
+        const boundaryIndex = match.index;
+        const delimiterLength = match[0].length;
+
         const eventBlock = buffer.slice(0, boundaryIndex).trim();
-        buffer = buffer.slice(boundaryIndex + 2);
+        buffer = buffer.slice(boundaryIndex + delimiterLength);
 
         if (eventBlock) {
-          parseAndEmitEvent(eventBlock, onEvent);
+          const success = parseAndEmitEvent(eventBlock, onEvent, onError);
+          if (!success) {
+            try {
+              await reader.cancel();
+            } catch {
+              // Ignore reader cancellation errors
+            }
+            return;
+          }
         }
       }
     }
@@ -75,20 +89,20 @@ export async function streamChatResponse(
     // Flush any remaining buffer text at end of stream
     const remaining = buffer.trim();
     if (remaining) {
-      parseAndEmitEvent(remaining, onEvent);
+      parseAndEmitEvent(remaining, onEvent, onError);
     }
   } catch (err) {
     if (err.name === "AbortError") {
-      // Aborted by user / new chat - safe silent return
+      // Aborted by user / new chat - safe silent return (normal control flow)
       return;
     }
     onError("Unable to connect to Second Brain AI server.");
   }
 }
 
-function parseAndEmitEvent(rawEventText, onEvent) {
-  // Split event block into lines and look for "data: " lines
-  const lines = rawEventText.split("\n");
+function parseAndEmitEvent(rawEventText, onEvent, onError) {
+  // Normalize line endings and split into individual lines
+  const lines = rawEventText.split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith("data:")) {
@@ -97,10 +111,15 @@ function parseAndEmitEvent(rawEventText, onEvent) {
         try {
           const parsed = JSON.parse(jsonStr);
           onEvent(parsed);
-        } catch {
-          // Ignore malformed JSON chunks safely
+        } catch (err) {
+          if (import.meta.env?.DEV) {
+            console.warn("Failed to parse SSE event JSON payload:", jsonStr, err);
+          }
+          onError("Unable to process the response stream. Please try again.");
+          return false;
         }
       }
     }
   }
+  return true;
 }
