@@ -1,7 +1,10 @@
 from functools import lru_cache
 from typing import List, Optional
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEV_JWT_SECRET = "dev-secret-key-change-in-production-must-be-secure"
 
 
 class Settings(BaseSettings):
@@ -23,7 +26,7 @@ class Settings(BaseSettings):
     ]
 
     # JWT Authentication Settings
-    jwt_secret_key: str = "dev-secret-key-change-in-production-must-be-secure"
+    jwt_secret_key: str = DEV_JWT_SECRET
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
 
@@ -52,6 +55,17 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @model_validator(mode="after")
+    def validate_production_jwt_secret(self) -> "Settings":
+        """Enforce secure JWT secret configuration in production environments."""
+        if self.app_env.lower() in ("production", "prod"):
+            if not self.jwt_secret_key or self.jwt_secret_key == DEV_JWT_SECRET or len(self.jwt_secret_key) < 32:
+                raise ValueError(
+                    "Production environment requires a secure jwt_secret_key (minimum 32 characters) "
+                    "configured via environment variable JWT_SECRET_KEY."
+                )
+        return self
 
 
 @lru_cache

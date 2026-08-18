@@ -174,6 +174,7 @@ class ExperienceClassificationModel(Base):
         UUID(as_uuid=True),
         ForeignKey("messages.id", ondelete="SET NULL"),
         nullable=True,
+        unique=True,
         index=True,
     )
     experience_id: Mapped[Optional[uuid.UUID]] = mapped_column(

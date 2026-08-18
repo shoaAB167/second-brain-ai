@@ -1,3 +1,4 @@
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional, Union
@@ -113,15 +114,17 @@ class ExperiencePromotionService:
                 source_message_id=message.id,
             )
         except Exception:
-            # Handle duplicate promotion race condition safely
-            if self._experience_repo:
-                existing = await self._experience_repo.get_by_source_message_id(message.id)
-                if existing:
-                    return PromotionResult(
-                        promoted=False,
-                        experience_id=existing.id,
-                        experience=existing,
-                    )
+            # Handle duplicate promotion race condition safely with retry loop
+            if self._experience_repo and message.id:
+                for _ in range(5):
+                    existing = await self._experience_repo.get_by_source_message_id(message.id)
+                    if existing:
+                        return PromotionResult(
+                            promoted=False,
+                            experience_id=existing.id,
+                            experience=existing,
+                        )
+                    await asyncio.sleep(0.02)
             raise
 
         # Link classification record experience_id to created Experience
