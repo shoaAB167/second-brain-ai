@@ -2,9 +2,14 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from personal_ai.application.experience import (
+    ExperiencePromotionService,
+    RecordExperience,
+)
 from personal_ai.db.repositories import (
     ConversationRepository,
     SQLAlchemyConversationRepository,
+    SQLAlchemyExperienceRepository,
 )
 from personal_ai.db.session import get_db_session
 from personal_ai.llm import LLMClient, get_llm_client
@@ -21,12 +26,28 @@ def get_conversation_repository(
     return SQLAlchemyConversationRepository(session=session)
 
 
+def get_experience_promotion_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> ExperiencePromotionService:
+    """Dependency provider constructing ExperiencePromotionService with SQLAlchemyExperienceRepository."""
+    exp_repo = SQLAlchemyExperienceRepository(session=session)
+    record_exp = RecordExperience(repository=exp_repo)
+    return ExperiencePromotionService(record_experience=record_exp)
+
+
 def get_chat_service(
     llm_client: LLMClient = Depends(get_llm_client),
     conversation_repo: ConversationRepository = Depends(get_conversation_repository),
+    experience_promotion_service: ExperiencePromotionService = Depends(
+        get_experience_promotion_service
+    ),
 ) -> ChatService:
-    """Dependency provider for ChatService, injecting repository and LLM abstractions."""
-    return ChatService(llm_client=llm_client, conversation_repo=conversation_repo)
+    """Dependency provider for ChatService, injecting repository, LLM, and promotion abstractions."""
+    return ChatService(
+        llm_client=llm_client,
+        conversation_repo=conversation_repo,
+        experience_promotion_service=experience_promotion_service,
+    )
 
 
 @router.post(

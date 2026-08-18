@@ -1,6 +1,7 @@
 import asyncio
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, List, Optional
 
+from personal_ai.application.experience import ExperiencePromotionService
 from personal_ai.core.exceptions import AppException
 from personal_ai.core.logger import get_logger
 from personal_ai.db.repositories.base import ConversationRepository
@@ -33,15 +34,18 @@ class ChatService:
         self,
         llm_client: LLMClient,
         conversation_repo: ConversationRepository,
+        experience_promotion_service: Optional[ExperiencePromotionService] = None,
     ) -> None:
-        """Initialize ChatService with abstract dependencies.
+        """Initialize ChatService with abstract dependencies and optional promotion service.
 
         Args:
             llm_client: Abstract LLM client interface.
             conversation_repo: Abstract conversation repository interface.
+            experience_promotion_service: Optional application service for Experience promotion.
         """
         self._llm_client = llm_client
         self._conversation_repo = conversation_repo
+        self._experience_promotion_service = experience_promotion_service
 
     async def process_chat(self, request: ChatRequest) -> ChatResponse:
         """Process an incoming chat request, maintaining conversation context synchronously."""
@@ -91,11 +95,18 @@ class ChatService:
         history.append(LLMMessage(role="user", content=request.message))
 
         # 4. Persist user message to conversation history before calling LLM
-        await self._conversation_repo.add_message(
+        user_message = await self._conversation_repo.add_message(
             conversation_id=conversation.id,
             role="user",
             content=request.message,
         )
+
+        # Evaluate Experience promotion if promotion service is configured
+        if self._experience_promotion_service:
+            await self._experience_promotion_service.promote_message(
+                user_message,
+                explicit_signal=getattr(request, "promote_experience", False),
+            )
 
         # 5. Execute LLM completion request with complete conversation context
         llm_response = await self._llm_client.generate_response(messages=history)
@@ -187,11 +198,18 @@ class ChatService:
         history.append(LLMMessage(role="user", content=request.message))
 
         # 4. Persist user message to conversation history before invoking LLM stream
-        await self._conversation_repo.add_message(
+        user_message = await self._conversation_repo.add_message(
             conversation_id=conversation.id,
             role="user",
             content=request.message,
         )
+
+        # Evaluate Experience promotion if promotion service is configured
+        if self._experience_promotion_service:
+            await self._experience_promotion_service.promote_message(
+                user_message,
+                explicit_signal=getattr(request, "promote_experience", False),
+            )
 
         accumulated_chunks: List[str] = []
 

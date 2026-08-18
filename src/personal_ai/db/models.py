@@ -91,6 +91,12 @@ class ExperienceModel(Base):
     user_id: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True, index=True
     )
+    source_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str] = mapped_column(
         SQLEnum(

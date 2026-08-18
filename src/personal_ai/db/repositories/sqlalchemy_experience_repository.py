@@ -36,6 +36,7 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
         model = ExperienceModel(
             id=experience.id,
             user_id=experience.user_id,
+            source_message_id=experience.source_message_id,
             content=experience.content,
             source=experience.source.value if hasattr(experience.source, "value") else str(experience.source),
             status=experience.status.value if hasattr(experience.status, "value") else str(experience.status),
@@ -70,6 +71,7 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
         return Experience(
             id=model.id,
             user_id=model.user_id,
+            source_message_id=model.source_message_id,
             content=model.content,
             source=ExperienceSource(model.source),
             status=ExperienceStatus(model.status),
