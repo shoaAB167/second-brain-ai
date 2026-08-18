@@ -24,13 +24,19 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class Conversation(Base):
-    """ORM Model representing a chat conversation thread."""
+class User(Base):
+    """ORM Model representing an authenticated user identity."""
 
-    __tablename__ = "conversations"
+    __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    email: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False, index=True
+    )
+    password_hash: Mapped[str] = mapped_column(
+        String(255), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
@@ -39,7 +45,37 @@ class Conversation(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
-    # One-to-many relationship with Message
+    conversations: Mapped[list["Conversation"]] = relationship(
+        "Conversation", back_populates="user", cascade="all, delete-orphan"
+    )
+    experiences: Mapped[list["ExperienceModel"]] = relationship(
+        "ExperienceModel", back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class Conversation(Base):
+    """ORM Model representing a chat conversation thread."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    user: Mapped[Optional[User]] = relationship("User", back_populates="conversations")
+
     messages: Mapped[list["Message"]] = relationship(
         "Message",
         back_populates="conversation",
@@ -88,13 +124,17 @@ class ExperienceModel(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    user_id: Mapped[Optional[str]] = mapped_column(
-        String(255), nullable=True, index=True
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     source_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("messages.id", ondelete="SET NULL"),
         nullable=True,
+        unique=True,
         index=True,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -118,6 +158,8 @@ class ExperienceModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )
+
+    user: Mapped[Optional[User]] = relationship("User", back_populates="experiences")
 
 
 class ExperienceClassificationModel(Base):
@@ -148,4 +190,3 @@ class ExperienceClassificationModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )
-

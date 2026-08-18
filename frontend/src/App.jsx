@@ -1,10 +1,12 @@
 import React from "react";
+import { AuthProvider } from "./context/AuthContext";
+import { AuthModal } from "./components/auth/AuthModal";
 import { ChatInput } from "./components/chat/ChatInput";
 import { Header } from "./components/chat/Header";
 import { MessageList } from "./components/chat/MessageList";
 import { useChat } from "./hooks/useChat";
 
-export function App() {
+function ChatApp() {
   const {
     messages,
     conversationId,
@@ -33,7 +35,17 @@ export function App() {
           isStreaming={isStreaming}
         />
       </main>
+
+      <AuthModal />
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <ChatApp />
+    </AuthProvider>
   );
 }
 

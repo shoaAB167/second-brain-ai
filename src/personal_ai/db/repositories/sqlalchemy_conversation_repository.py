@@ -12,6 +12,7 @@ class SQLAlchemyConversationRepository(ConversationRepository):
     """SQLAlchemy 2.x async implementation of ConversationRepository interface.
 
     Encapsulates database access using SQLAlchemy AsyncSession.
+    Enforces user data isolation for multi-tenant conversation access.
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -22,16 +23,16 @@ class SQLAlchemyConversationRepository(ConversationRepository):
         """
         self._session = session
 
-    async def create_conversation(self, user_id: Optional[str] = None) -> Conversation:
+    async def create_conversation(self, user_id: Optional[uuid.UUID] = None) -> Conversation:
         """Create and persist a new Conversation.
 
         Args:
-            user_id: Optional user identifier (reserved for future auth support).
+            user_id: Optional authenticated user UUID associated with this conversation.
 
         Returns:
             Conversation: The newly created conversation entity.
         """
-        conversation = Conversation()
+        conversation = Conversation(user_id=user_id)
         self._session.add(conversation)
         await self._session.commit()
         await self._session.refresh(conversation)
@@ -40,20 +41,22 @@ class SQLAlchemyConversationRepository(ConversationRepository):
     async def get_conversation(
         self,
         conversation_id: uuid.UUID,
-        user_id: Optional[str] = None,
+        user_id: Optional[uuid.UUID] = None,
     ) -> Optional[Conversation]:
-        """Fetch a conversation by ID.
+        """Fetch a conversation by ID, enforcing optional user_id ownership match.
 
         Args:
             conversation_id: UUID of the conversation.
-            user_id: Optional user identifier (reserved for future auth support).
+            user_id: Optional user UUID for strict ownership filtering.
 
         Returns:
             Optional[Conversation]: Found conversation entity or None.
         """
-        result = await self._session.execute(
-            select(Conversation).where(Conversation.id == conversation_id)
-        )
+        stmt = select(Conversation).where(Conversation.id == conversation_id)
+        if user_id is not None:
+            stmt = stmt.where(Conversation.user_id == user_id)
+
+        result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_conversation_messages(self, conversation_id: uuid.UUID) -> List[Message]:
@@ -97,7 +100,7 @@ class SQLAlchemyConversationRepository(ConversationRepository):
         )
         self._session.add(message)
 
-        # Update the parent conversation's updated_at timestamp to reflect last activity
+        # Update parent conversation's updated_at timestamp
         conversation = await self.get_conversation(conversation_id)
         if conversation:
             conversation.updated_at = utc_now()

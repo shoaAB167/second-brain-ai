@@ -22,6 +22,11 @@ class Settings(BaseSettings):
         "http://localhost:3000",
     ]
 
+    # JWT Authentication Settings
+    jwt_secret_key: str = "dev-secret-key-change-in-production-must-be-secure"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60
+
     # LLM Settings
     llm_provider: str = "openai"
     llm_model: str = "gpt-4o-mini"

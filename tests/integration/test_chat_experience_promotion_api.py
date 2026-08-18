@@ -5,12 +5,14 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from personal_ai.application.experience import (
     ExperiencePromotionService,
     PromotionStrategy,
     RecordExperience,
 )
+from personal_ai.core.auth import create_access_token
 from personal_ai.db.models import Base, ExperienceModel, Message
 from personal_ai.db.repositories import SQLAlchemyExperienceRepository
 from personal_ai.db.session import get_db_session
@@ -19,7 +21,7 @@ from personal_ai.llm.models import LLMResponse
 from personal_ai.main import app
 
 client = TestClient(app)
-test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool, echo=False)
 test_session_factory = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -50,8 +52,15 @@ def setup_chat_promotion_db(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(test_engine.dispose())
 
 
+def get_auth_headers() -> dict[str, str]:
+    """Helper to generate Authorization header for a test user."""
+    token = create_access_token(user_id=uuid.uuid4())
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_chat_promotion_creates_experience_linked_to_user_message() -> None:
-    """Verify chat request creates user Message and promoted Experience linked via source_message_id."""
+    """Verify authenticated chat request creates user Message and promoted Experience linked via source_message_id."""
+    headers = get_auth_headers()
     mock_llm_client = MagicMock(spec=LLMClient)
     mock_llm_client.generate_response = AsyncMock(
         return_value=LLMResponse(
@@ -63,7 +72,6 @@ def test_chat_promotion_creates_experience_linked_to_user_message() -> None:
     )
     app.dependency_overrides[get_llm_client] = lambda: mock_llm_client
 
-    # Inject promotion service with AlwaysPromoteUserStrategy into ChatService via dependency override
     from personal_ai.api.routers.chat import get_experience_promotion_service
 
     async def override_chat_promotion_service() -> ExperiencePromotionService:
@@ -80,20 +88,21 @@ def test_chat_promotion_creates_experience_linked_to_user_message() -> None:
     user_prompt = "I started learning FastAPI today."
     payload = {"message": user_prompt}
 
-    response = client.post("/api/v1/chat", json=payload)
+    response = client.post("/api/v1/chat", json=payload, headers=headers)
     assert response.status_code == 200
+
+    # Give background promotion task time to run
+    asyncio.run(asyncio.sleep(0.1))
 
     # Verify that both Message and Experience were persisted and linked via source_message_id
     async def verify_db() -> None:
         async with test_session_factory() as session:
-            # Query user message
             msg_stmt = select(Message).where(Message.content == user_prompt)
             msg_res = await session.execute(msg_stmt)
             user_msg = msg_res.scalar_one_or_none()
 
             assert user_msg is not None
 
-            # Query promoted experience
             exp_stmt = select(ExperienceModel).where(ExperienceModel.source_message_id == user_msg.id)
             exp_res = await session.execute(exp_stmt)
             exp_model = exp_res.scalar_one_or_none()

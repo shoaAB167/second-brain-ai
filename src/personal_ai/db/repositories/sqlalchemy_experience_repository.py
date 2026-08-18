@@ -33,9 +33,10 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
         Returns:
             Experience: Persisted Experience domain entity.
         """
+        user_id_val = uuid.UUID(str(experience.user_id)) if experience.user_id else None
         model = ExperienceModel(
             id=experience.id,
-            user_id=experience.user_id,
+            user_id=user_id_val,
             source_message_id=experience.source_message_id,
             content=experience.content,
             source=experience.source.value if hasattr(experience.source, "value") else str(experience.source),
@@ -57,6 +58,24 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             Optional[Experience]: Found domain entity or None.
         """
         stmt = select(ExperienceModel).where(ExperienceModel.id == experience_id)
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+
+        if not model:
+            return None
+
+        return self._model_to_domain(model)
+
+    async def get_by_source_message_id(self, source_message_id: uuid.UUID) -> Optional[Experience]:
+        """Retrieve an Experience domain entity by source message ID provenance.
+
+        Args:
+            source_message_id: UUID of the originating message.
+
+        Returns:
+            Optional[Experience]: Found domain entity or None.
+        """
+        stmt = select(ExperienceModel).where(ExperienceModel.source_message_id == source_message_id)
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
 

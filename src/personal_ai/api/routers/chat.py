@@ -1,7 +1,9 @@
+import uuid
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from personal_ai.api.dependencies import get_current_user_id, get_db_session, get_llm_client
 from personal_ai.application.experience import (
     AIExperiencePromotionStrategy,
     ExperienceClassifier,
@@ -14,8 +16,7 @@ from personal_ai.db.repositories import (
     SQLAlchemyExperienceClassificationRepository,
     SQLAlchemyExperienceRepository,
 )
-from personal_ai.db.session import get_db_session
-from personal_ai.llm import LLMClient, get_llm_client
+from personal_ai.llm import LLMClient
 from personal_ai.models.chat import ChatRequest, ChatResponse
 from personal_ai.services.chat_service import ChatService
 
@@ -46,6 +47,7 @@ def get_experience_promotion_service(
     return ExperiencePromotionService(
         record_experience=record_exp,
         strategy=strategy,
+        experience_repo=exp_repo,
     )
 
 
@@ -68,28 +70,30 @@ def get_chat_service(
     "/chat",
     response_model=ChatResponse,
     summary="Send Chat Message",
-    description="Processes a prompt message with conversation history synchronously.",
+    description="Processes a prompt message with conversation history synchronously for the authenticated user.",
 )
 async def chat(
     request: ChatRequest,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     chat_service: ChatService = Depends(get_chat_service),
 ) -> ChatResponse:
     """Execute synchronous chat completion request through ChatService."""
-    return await chat_service.process_chat(request)
+    return await chat_service.process_chat(request, user_id=current_user_id)
 
 
 @router.post(
     "/chat/stream",
     summary="Send Chat Message (Streaming)",
-    description="Streams chat completions using Server-Sent Events (SSE) in real time.",
+    description="Streams chat completions using Server-Sent Events (SSE) in real time for the authenticated user.",
 )
 async def chat_stream(
     request: ChatRequest,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     chat_service: ChatService = Depends(get_chat_service),
 ) -> StreamingResponse:
     """Execute streaming chat completion request returning Server-Sent Events (SSE)."""
     return StreamingResponse(
-        chat_service.process_chat_stream(request),
+        chat_service.process_chat_stream(request, user_id=current_user_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

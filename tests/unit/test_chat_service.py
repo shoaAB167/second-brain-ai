@@ -5,6 +5,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from personal_ai.application.experience import ExperiencePromotionService
 from personal_ai.core.exceptions import AppException
 from personal_ai.db.models import Base, MessageRole
 from personal_ai.db.repositories import (
@@ -52,12 +53,17 @@ async def test_chat_service_creates_conversation_when_id_absent(db_session: Asyn
     )
 
     service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
-    response = await service.process_chat(ChatRequest(message="Hello"))
+    user_id = uuid.uuid4()
+    response = await service.process_chat(ChatRequest(message="Hello"), user_id=user_id)
 
     assert response.conversation_id is not None
     assert response.response == "Hello back"
 
-    # Verify messages stored in DB
+    # Verify messages stored in DB and conversation belongs to user_id
+    conversation = await repo.get_conversation(response.conversation_id, user_id=user_id)
+    assert conversation is not None
+    assert conversation.user_id == user_id
+
     messages = await repo.get_conversation_messages(response.conversation_id)
     assert len(messages) == 2
     assert messages[0].role == MessageRole.USER
@@ -70,7 +76,8 @@ async def test_chat_service_creates_conversation_when_id_absent(db_session: Asyn
 async def test_chat_service_reuses_existing_conversation(db_session: AsyncSession) -> None:
     """Verify ChatService reuses existing conversation and passes history to LLM in order."""
     repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
-    conversation = await repo.create_conversation()
+    user_id = uuid.uuid4()
+    conversation = await repo.create_conversation(user_id=user_id)
 
     # Pre-populate history
     await repo.add_message(conversation.id, role="user", content="Hi")
@@ -88,7 +95,8 @@ async def test_chat_service_reuses_existing_conversation(db_session: AsyncSessio
 
     service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
     response = await service.process_chat(
-        ChatRequest(conversation_id=conversation.id, message="How are you?")
+        ChatRequest(conversation_id=conversation.id, message="How are you?"),
+        user_id=user_id,
     )
 
     assert response.conversation_id == conversation.id
@@ -106,6 +114,36 @@ async def test_chat_service_reuses_existing_conversation(db_session: AsyncSessio
     # Verify 4 messages in DB now
     messages = await repo.get_conversation_messages(conversation.id)
     assert len(messages) == 4
+
+
+@pytest.mark.asyncio
+async def test_chat_service_background_experience_promotion_failure_does_not_break_chat(
+    db_session: AsyncSession,
+) -> None:
+    """29, B1, B2. Verify background experience promotion failure does NOT break chat or streaming."""
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
+    conversation = await repo.create_conversation()
+
+    mock_llm_client = MagicMock(spec=LLMClient)
+    mock_llm_client.generate_response = AsyncMock(
+        return_value=LLMResponse(content="Response despite promo error", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+    )
+
+    mock_promo_service = MagicMock(spec=ExperiencePromotionService)
+    mock_promo_service.promote_message = AsyncMock(side_effect=RuntimeError("Promotion system crash!"))
+
+    service = ChatService(
+        llm_client=mock_llm_client,
+        conversation_repo=repo,
+        experience_promotion_service=mock_promo_service,
+    )
+
+    # Chat should complete cleanly despite background classification error
+    response = await service.process_chat(
+        ChatRequest(conversation_id=conversation.id, message="Prompt with failing promo")
+    )
+
+    assert response.response == "Response despite promo error"
 
 
 @pytest.mark.asyncio

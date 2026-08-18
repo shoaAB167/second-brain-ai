@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from personal_ai.core.auth import create_access_token
 from personal_ai.db.models import Base, ExperienceModel
 from personal_ai.db.session import get_db_session
 from personal_ai.main import app
@@ -33,6 +34,12 @@ def setup_experience_db(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(test_engine.dispose())
 
 
+def get_auth_headers() -> dict[str, str]:
+    """Helper to generate Authorization header for a test user."""
+    token = create_access_token(user_id=uuid.uuid4())
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_post_experience_returns_201_created_and_persists() -> None:
     """Verify POST /api/v1/experiences returns HTTP 201 Created and persists Experience."""
     raw_content = "I started learning FastAPI today."
@@ -41,7 +48,7 @@ def test_post_experience_returns_201_created_and_persists() -> None:
         "source": "CHAT",
     }
 
-    response = client.post("/api/v1/experiences", json=payload)
+    response = client.post("/api/v1/experiences", json=payload, headers=get_auth_headers())
 
     assert response.status_code == 201
     data = response.json()
@@ -73,7 +80,7 @@ def test_post_experience_empty_content_rejected() -> None:
         "content": "",
         "source": "CHAT",
     }
-    response = client.post("/api/v1/experiences", json=payload)
+    response = client.post("/api/v1/experiences", json=payload, headers=get_auth_headers())
     assert response.status_code in (400, 422)
 
 
@@ -83,7 +90,7 @@ def test_post_experience_whitespace_content_rejected() -> None:
         "content": "   \n\t ",
         "source": "CHAT",
     }
-    response = client.post("/api/v1/experiences", json=payload)
+    response = client.post("/api/v1/experiences", json=payload, headers=get_auth_headers())
     assert response.status_code in (400, 422)
 
 
@@ -93,5 +100,5 @@ def test_post_experience_invalid_source_rejected() -> None:
         "content": "Valid content",
         "source": "UNSUPPORTED_SOURCE",
     }
-    response = client.post("/api/v1/experiences", json=payload)
+    response = client.post("/api/v1/experiences", json=payload, headers=get_auth_headers())
     assert response.status_code in (400, 422)

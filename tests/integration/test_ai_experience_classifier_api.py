@@ -6,7 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
+from personal_ai.core.auth import create_access_token
 from personal_ai.db.models import Base, ExperienceClassificationModel, ExperienceModel, Message
 from personal_ai.db.session import get_db_session
 from personal_ai.llm import LLMClient, get_llm_client
@@ -15,7 +17,7 @@ from personal_ai.llm.models import LLMResponse
 from personal_ai.main import app
 
 client = TestClient(app)
-test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool, echo=False)
 test_session_factory = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -38,11 +40,17 @@ def setup_ai_classifier_db(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(test_engine.dispose())
 
 
+def get_auth_headers() -> dict[str, str]:
+    """Helper to generate Authorization header for a test user."""
+    token = create_access_token(user_id=uuid.uuid4())
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_chat_triggers_ai_classifier_and_persists_classification_and_experience() -> None:
-    """Verify chat request uses AI Experience Classifier and persists classification & experience."""
+    """Verify authenticated chat request uses AI Experience Classifier and persists classification & experience."""
+    headers = get_auth_headers()
     mock_llm_client = MagicMock(spec=LLMClient)
 
-    # Return structured classifier JSON on first call, chat response on second call
     classifier_json = json.dumps({
         "is_experience": True,
         "type": "GOAL",
@@ -51,7 +59,6 @@ def test_chat_triggers_ai_classifier_and_persists_classification_and_experience(
     })
 
     async def mock_generate_response(messages, **kwargs):
-        # Check if messages contain classifier prompt
         is_classifier = any("Personal Experience Classifier" in msg.content for msg in messages)
         if is_classifier:
             return LLMResponse(content=classifier_json, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
@@ -63,19 +70,20 @@ def test_chat_triggers_ai_classifier_and_persists_classification_and_experience(
     user_prompt = "I've decided to focus my career on AI engineering."
     payload = {"message": user_prompt}
 
-    response = client.post("/api/v1/chat", json=payload)
+    response = client.post("/api/v1/chat", json=payload, headers=headers)
     assert response.status_code == 200
+
+    # Give background task time to run in test loop
+    asyncio.run(asyncio.sleep(0.1))
 
     # Verify database persistence of Message, ExperienceModel, and ExperienceClassificationModel
     async def verify_db() -> None:
         async with test_session_factory() as session:
-            # Query user message
             msg_stmt = select(Message).where(Message.content == user_prompt)
             msg_res = await session.execute(msg_stmt)
             user_msg = msg_res.scalar_one_or_none()
             assert user_msg is not None
 
-            # Query classification provenance record
             class_stmt = select(ExperienceClassificationModel).where(
                 ExperienceClassificationModel.source_message_id == user_msg.id
             )
@@ -88,7 +96,6 @@ def test_chat_triggers_ai_classifier_and_persists_classification_and_experience(
             assert class_model.importance == 0.90
             assert class_model.confidence == 0.95
 
-            # Query promoted experience
             exp_stmt = select(ExperienceModel).where(ExperienceModel.source_message_id == user_msg.id)
             exp_res = await session.execute(exp_stmt)
             exp_model = exp_res.scalar_one_or_none()
@@ -104,6 +111,7 @@ def test_chat_triggers_ai_classifier_and_persists_classification_and_experience(
 
 def test_classifier_failure_does_not_break_chat() -> None:
     """Verify chat request succeeds even if classifier encounters LLM exception."""
+    headers = get_auth_headers()
     mock_llm_client = MagicMock(spec=LLMClient)
 
     async def mock_generate_response(messages, **kwargs):
@@ -116,7 +124,7 @@ def test_classifier_failure_does_not_break_chat() -> None:
     app.dependency_overrides[get_llm_client] = lambda: mock_llm_client
 
     payload = {"message": "I feel tired today."}
-    response = client.post("/api/v1/chat", json=payload)
+    response = client.post("/api/v1/chat", json=payload, headers=headers)
 
     # Chat MUST succeed 200 OK
     assert response.status_code == 200

@@ -17,13 +17,14 @@ def create_app() -> FastAPI:
     )
 
     # Configure CORS middleware
-    if settings.cors_origins:
-        application.add_middleware(
-            CORSMiddleware,
-            allow_origins=settings.cors_origins,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+    origins = settings.cors_origins or ["*"]
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins if "*" not in origins else ["*"],
+        allow_credentials=True if "*" not in origins else False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # Register custom exception handlers
     application.add_exception_handler(AppException, app_exception_handler)  # type: ignore[arg-type]

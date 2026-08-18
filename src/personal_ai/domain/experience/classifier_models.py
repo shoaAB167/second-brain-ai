@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from personal_ai.domain.experience.enums import ExperienceType
 
@@ -8,6 +8,7 @@ class ClassificationResult(BaseModel):
     """Structured result produced by the AI Experience Classifier.
 
     Represents probabilistic classification metrics for user messages.
+    Fails closed on invalid experience types or inconsistent fields.
     Does NOT directly create or modify Experience records in the database.
     """
 
@@ -17,7 +18,7 @@ class ClassificationResult(BaseModel):
     )
     type: Optional[ExperienceType] = Field(
         default=None,
-        description="Broad taxonomy category of the experience, if is_experience is True.",
+        description="Broad taxonomy category of the experience, required if is_experience is True.",
     )
     importance: float = Field(
         ...,
@@ -50,12 +51,24 @@ class ClassificationResult(BaseModel):
     @field_validator("type", mode="before")
     @classmethod
     def validate_type_enum(cls, value: Optional[str]) -> Optional[ExperienceType]:
-        """Convert string to ExperienceType enum if present."""
-        if value is None or value == "":
+        """Convert string to ExperienceType enum. Fails closed on invalid strings."""
+        if value is None or value == "" or str(value).lower() in ("null", "none"):
             return None
         if isinstance(value, ExperienceType):
             return value
         try:
             return ExperienceType(str(value).upper())
         except ValueError:
-            return ExperienceType.OTHER
+            raise ValueError(f"Invalid experience type: '{value}'.")
+
+    @model_validator(mode="after")
+    def validate_experience_type_consistency(self) -> "ClassificationResult":
+        """Enforce fail-closed business rules:
+        - When is_experience=False, type MUST be None.
+        - When is_experience=True, type MUST be a valid ExperienceType.
+        """
+        if not self.is_experience and self.type is not None:
+            raise ValueError("When is_experience is False, type MUST be None.")
+        if self.is_experience and self.type is None:
+            raise ValueError("When is_experience is True, type MUST be a valid ExperienceType.")
+        return self
