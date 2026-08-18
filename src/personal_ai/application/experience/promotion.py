@@ -89,7 +89,11 @@ class ExperiencePromotionService:
         if role_str.lower() != "user":
             return PromotionResult(promoted=False)
 
-        should_promote = self._strategy.evaluate(message, explicit_signal=explicit_signal)
+        if hasattr(self._strategy, "evaluate_async"):
+            should_promote, _ = await self._strategy.evaluate_async(message)
+        else:
+            should_promote = self._strategy.evaluate(message, explicit_signal=explicit_signal)
+
         if not should_promote:
             return PromotionResult(promoted=False)
 

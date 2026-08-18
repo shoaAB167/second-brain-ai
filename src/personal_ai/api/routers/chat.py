@@ -3,12 +3,15 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from personal_ai.application.experience import (
+    AIExperiencePromotionStrategy,
+    ExperienceClassifier,
     ExperiencePromotionService,
     RecordExperience,
 )
 from personal_ai.db.repositories import (
     ConversationRepository,
     SQLAlchemyConversationRepository,
+    SQLAlchemyExperienceClassificationRepository,
     SQLAlchemyExperienceRepository,
 )
 from personal_ai.db.session import get_db_session
@@ -28,11 +31,22 @@ def get_conversation_repository(
 
 def get_experience_promotion_service(
     session: AsyncSession = Depends(get_db_session),
+    llm_client: LLMClient = Depends(get_llm_client),
 ) -> ExperiencePromotionService:
-    """Dependency provider constructing ExperiencePromotionService with SQLAlchemyExperienceRepository."""
+    """Dependency provider constructing ExperiencePromotionService with AIExperiencePromotionStrategy."""
     exp_repo = SQLAlchemyExperienceRepository(session=session)
     record_exp = RecordExperience(repository=exp_repo)
-    return ExperiencePromotionService(record_experience=record_exp)
+    classification_repo = SQLAlchemyExperienceClassificationRepository(session=session)
+
+    classifier = ExperienceClassifier(llm_client=llm_client)
+    strategy = AIExperiencePromotionStrategy(
+        classifier=classifier,
+        classification_repo=classification_repo,
+    )
+    return ExperiencePromotionService(
+        record_experience=record_exp,
+        strategy=strategy,
+    )
 
 
 def get_chat_service(

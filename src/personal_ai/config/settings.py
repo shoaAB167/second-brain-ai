@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # Database Settings
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/second_brain_ai"
 
+    # Experience Classifier Settings
+    experience_classifier_min_confidence: float = 0.70
+    experience_classifier_min_importance: float = 0.50
+
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(

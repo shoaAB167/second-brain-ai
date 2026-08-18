@@ -1,3 +1,5 @@
+from personal_ai.application.experience.ai_strategy import AIExperiencePromotionStrategy
+from personal_ai.application.experience.classifier import ExperienceClassifier
 from personal_ai.application.experience.promotion import (
     DeterministicPromotionStrategy,
     ExperiencePromotionService,
@@ -8,6 +10,8 @@ from personal_ai.application.experience.record_experience import RecordExperienc
 
 __all__ = [
     "RecordExperience",
+    "ExperienceClassifier",
+    "AIExperiencePromotionStrategy",
     "ExperiencePromotionService",
     "PromotionStrategy",
     "DeterministicPromotionStrategy",

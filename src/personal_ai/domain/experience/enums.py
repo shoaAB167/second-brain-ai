@@ -20,3 +20,17 @@ class ExperienceStatus(str, Enum):
     PROCESSING = "PROCESSING"
     PROCESSED = "PROCESSED"
     FAILED = "FAILED"
+
+
+class ExperienceType(str, Enum):
+    """Taxonomy types for classified experiences."""
+    GOAL = "GOAL"
+    DECISION = "DECISION"
+    PREFERENCE = "PREFERENCE"
+    FACT = "FACT"
+    EVENT = "EVENT"
+    RELATIONSHIP = "RELATIONSHIP"
+    EMOTION_STATE = "EMOTION_STATE"
+    HABIT = "HABIT"
+    PROJECT = "PROJECT"
+    OTHER = "OTHER"

@@ -119,3 +119,33 @@ class ExperienceModel(Base):
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )
 
+
+class ExperienceClassificationModel(Base):
+    """ORM Model representing classification metrics and provenance produced by ExperienceClassifier."""
+
+    __tablename__ = "experience_classifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    source_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    experience_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experiences.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    is_experience: Mapped[bool] = mapped_column(nullable=False)
+    type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    importance: Mapped[float] = mapped_column(nullable=False)
+    confidence: Mapped[float] = mapped_column(nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
