@@ -502,10 +502,10 @@ body {
   color: var(--text-secondary);
   font-size: 0.75rem;
   cursor: pointer;
+}
 
 .password-toggle-btn:hover {
   color: var(--text-primary);
-}
 }
 
 .auth-submit-btn {
