@@ -1,6 +1,5 @@
 from typing import Optional
 import uuid
-from unittest.mock import AsyncMock
 import pytest
 
 from personal_ai.application.experience import RecordExperience
@@ -26,6 +25,12 @@ class MockExperienceRepository(ExperienceRepository):
     async def get_by_id(self, experience_id: uuid.UUID) -> Optional[Experience]:
         for exp in self.created_experiences:
             if exp.id == experience_id:
+                return exp
+        return None
+
+    async def get_by_source_message_id(self, source_message_id: uuid.UUID) -> Optional[Experience]:
+        for exp in self.created_experiences:
+            if exp.source_message_id == source_message_id:
                 return exp
         return None
 

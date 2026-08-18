@@ -1,10 +1,10 @@
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 /**
  * Robust SSE Stream parser function reading POST response streams in JavaScript.
  * Handles split network chunks, CRLF/LF event boundaries (\r\n\r\n and \n\n),
- * multi-byte UTF-8 boundaries, multiple data events per chunk, and safe error handling.
+ * multi-byte UTF-8 boundaries, multiple data events per chunk, and Bearer JWT auth.
  */
 export async function streamChatResponse(
   payload,
@@ -13,13 +13,20 @@ export async function streamChatResponse(
   signal
 ) {
   const url = `${API_BASE_URL}/api/v1/chat/stream`;
+  const token = payload.token || localStorage.getItem("sb_auth_token");
+
+  const headers = {
+    "Content-Type": "application/json",
+  };
+
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
 
   try {
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         message: payload.message,
         conversation_id: payload.conversation_id || null,
@@ -35,11 +42,13 @@ export async function streamChatResponse(
         const parsed = JSON.parse(errorText);
         message = parsed.error?.message || parsed.detail || message;
       } catch {
-        if (response.status === 404) {
+        if (response.status === 401) {
+          message = "Authentication required. Please log in to continue.";
+        } else if (response.status === 404) {
           message = "Conversation thread not found.";
         }
       }
-      onError(message);
+      onError(message, response.status);
       return;
     }
 
@@ -58,10 +67,8 @@ export async function streamChatResponse(
         break;
       }
 
-      // Decode bytes using stream: true to preserve partial UTF-8 multi-byte characters
       buffer += decoder.decode(value, { stream: true });
 
-      // Process complete SSE event blocks separated by \r\n\r\n or \n\n
       while (true) {
         const match = buffer.match(/\r?\n\r?\n/);
         if (!match) break;
@@ -78,7 +85,7 @@ export async function streamChatResponse(
             try {
               await reader.cancel();
             } catch {
-              // Ignore reader cancellation errors
+              // Ignore cancellation errors
             }
             return;
           }
@@ -86,22 +93,19 @@ export async function streamChatResponse(
       }
     }
 
-    // Flush any remaining buffer text at end of stream
     const remaining = buffer.trim();
     if (remaining) {
       parseAndEmitEvent(remaining, onEvent, onError);
     }
   } catch (err) {
     if (err.name === "AbortError") {
-      // Aborted by user / new chat - safe silent return (normal control flow)
       return;
     }
-    onError("Unable to connect to Second Brain AI server.");
+    onError("Unable to connect to Second Brain AI server. Please make sure the backend server is running.");
   }
 }
 
 function parseAndEmitEvent(rawEventText, onEvent, onError) {
-  // Normalize line endings and split into individual lines
   const lines = rawEventText.split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();

@@ -34,3 +34,15 @@ class ExperienceRepository(ABC):
             Optional[Experience]: The found domain entity or None.
         """
         pass
+
+    @abstractmethod
+    async def get_by_source_message_id(self, source_message_id: uuid.UUID) -> Optional[Experience]:
+        """Retrieve an Experience domain entity by source message ID provenance.
+
+        Args:
+            source_message_id: UUID of the originating conversation message.
+
+        Returns:
+            Optional[Experience]: Found domain entity or None.
+        """
+        pass

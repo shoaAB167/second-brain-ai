@@ -1,4 +1,5 @@
 from typing import Optional, Union
+import uuid
 
 from personal_ai.core.exceptions import AppException
 from personal_ai.domain.experience import (
@@ -31,6 +32,7 @@ class RecordExperience:
         content: str,
         source: Union[ExperienceSource, str],
         user_id: Optional[str] = None,
+        source_message_id: Optional[uuid.UUID] = None,
     ) -> Experience:
         """Execute the RecordExperience use case.
 
@@ -38,6 +40,7 @@ class RecordExperience:
             content: Raw user-provided experience text.
             source: Source channel (e.g. CHAT, FILE).
             user_id: Optional user identifier.
+            source_message_id: Optional UUID of the originating user Message.
 
         Returns:
             Experience: The created and persisted domain Experience entity.
@@ -68,6 +71,7 @@ class RecordExperience:
                 content=content,
                 source=exp_source,
                 user_id=user_id,
+                source_message_id=source_message_id,
                 status=ExperienceStatus.RECEIVED,
             )
         except ValueError as exc:

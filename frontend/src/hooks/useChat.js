@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { streamChatResponse } from "../services/chatApi";
+import { useAuth } from "../context/AuthContext";
 
 const LOCAL_STORAGE_KEY = "second_brain_conversation_id";
 
@@ -8,6 +9,8 @@ export function useChat() {
   const [conversationId, setConversationId] = useState(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState(null);
+
+  const { token, openAuthModal } = useAuth();
 
   const abortControllerRef = useRef(null);
   const requestIdRef = useRef(0);
@@ -20,12 +23,11 @@ export function useChat() {
         setConversationId(savedId);
       }
     } catch {
-      // Ignore storage errors safely in restricted environments
+      // Ignore storage errors safely
     }
   }, []);
 
   const startNewChat = useCallback(() => {
-    // Invalidate any ongoing or late request callbacks
     requestIdRef.current++;
 
     if (abortControllerRef.current) {
@@ -49,7 +51,11 @@ export function useChat() {
       const trimmed = text ? text.trim() : "";
       if (!trimmed || isStreaming) return;
 
-      // Invalidate previous requests and track generation for current request
+      if (!token) {
+        openAuthModal();
+        return;
+      }
+
       const currentRequestId = ++requestIdRef.current;
 
       if (abortControllerRef.current) {
@@ -86,9 +92,9 @@ export function useChat() {
           {
             message: trimmed,
             conversation_id: currentConvId,
+            token,
           },
           (event) => {
-            // Ignore events if a new request or new chat was started
             if (currentRequestId !== requestIdRef.current) return;
 
             if (event.type === "token" && event.content) {
@@ -116,11 +122,13 @@ export function useChat() {
               );
             }
           },
-          (errorMessage) => {
-            // Ignore errors if a new request or new chat was started
+          (errorMessage, status) => {
             if (currentRequestId !== requestIdRef.current) return;
 
             setIsStreaming(false);
+            if (status === 401) {
+              openAuthModal();
+            }
             setError(errorMessage);
           },
           controller.signal
@@ -136,7 +144,7 @@ export function useChat() {
         }
       }
     },
-    [conversationId, isStreaming]
+    [conversationId, isStreaming, token, openAuthModal]
   );
 
   return {

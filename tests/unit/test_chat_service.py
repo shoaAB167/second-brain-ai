@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 import uuid
 
@@ -5,6 +6,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from personal_ai.application.experience.background_processor import (
+    BackgroundExperienceProcessor,
+)
 from personal_ai.core.exceptions import AppException
 from personal_ai.db.models import Base, MessageRole
 from personal_ai.db.repositories import (
@@ -52,12 +56,17 @@ async def test_chat_service_creates_conversation_when_id_absent(db_session: Asyn
     )
 
     service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
-    response = await service.process_chat(ChatRequest(message="Hello"))
+    user_id = uuid.uuid4()
+    response = await service.process_chat(ChatRequest(message="Hello"), user_id=user_id)
 
     assert response.conversation_id is not None
     assert response.response == "Hello back"
 
-    # Verify messages stored in DB
+    # Verify messages stored in DB and conversation belongs to user_id
+    conversation = await repo.get_conversation(response.conversation_id, user_id=user_id)
+    assert conversation is not None
+    assert conversation.user_id == user_id
+
     messages = await repo.get_conversation_messages(response.conversation_id)
     assert len(messages) == 2
     assert messages[0].role == MessageRole.USER
@@ -70,7 +79,8 @@ async def test_chat_service_creates_conversation_when_id_absent(db_session: Asyn
 async def test_chat_service_reuses_existing_conversation(db_session: AsyncSession) -> None:
     """Verify ChatService reuses existing conversation and passes history to LLM in order."""
     repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
-    conversation = await repo.create_conversation()
+    user_id = uuid.uuid4()
+    conversation = await repo.create_conversation(user_id=user_id)
 
     # Pre-populate history
     await repo.add_message(conversation.id, role="user", content="Hi")
@@ -88,7 +98,8 @@ async def test_chat_service_reuses_existing_conversation(db_session: AsyncSessio
 
     service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
     response = await service.process_chat(
-        ChatRequest(conversation_id=conversation.id, message="How are you?")
+        ChatRequest(conversation_id=conversation.id, message="How are you?"),
+        user_id=user_id,
     )
 
     assert response.conversation_id == conversation.id
@@ -106,6 +117,40 @@ async def test_chat_service_reuses_existing_conversation(db_session: AsyncSessio
     # Verify 4 messages in DB now
     messages = await repo.get_conversation_messages(conversation.id)
     assert len(messages) == 4
+
+
+@pytest.mark.asyncio
+async def test_sync_chat_does_not_wait_for_classification(db_session: AsyncSession) -> None:
+    """Requirement A: Verify synchronous chat does NOT wait for background experience processor."""
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
+    conversation = await repo.create_conversation()
+
+    mock_llm_client = MagicMock(spec=LLMClient)
+    mock_llm_client.generate_response = AsyncMock(
+        return_value=LLMResponse(content="Sync chat response", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+    )
+
+    slow_bg_processor = MagicMock(spec=BackgroundExperienceProcessor)
+
+    async def slow_bg_promo(*args, **kwargs):
+        await asyncio.sleep(1.0)
+
+    slow_bg_processor.process_background_promotion = AsyncMock(side_effect=slow_bg_promo)
+
+    service = ChatService(
+        llm_client=mock_llm_client,
+        conversation_repo=repo,
+        bg_processor=slow_bg_processor,
+    )
+
+    start_time = asyncio.get_event_loop().time()
+    response = await service.process_chat(
+        ChatRequest(conversation_id=conversation.id, message="Fast sync request")
+    )
+    elapsed = asyncio.get_event_loop().time() - start_time
+
+    assert response.response == "Sync chat response"
+    assert elapsed < 0.2  # Must finish immediately without waiting for slow_bg_promo (1.0s)
 
 
 @pytest.mark.asyncio

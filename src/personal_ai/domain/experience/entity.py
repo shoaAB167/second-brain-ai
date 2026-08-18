@@ -22,6 +22,7 @@ class Experience:
     content: str
     source: ExperienceSource
     user_id: Optional[str] = None
+    source_message_id: Optional[uuid.UUID] = None
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     status: ExperienceStatus = field(default=ExperienceStatus.RECEIVED)
     created_at: datetime = field(default_factory=utc_now)
