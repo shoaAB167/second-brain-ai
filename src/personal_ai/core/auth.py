@@ -13,15 +13,26 @@ logger = get_logger(__name__)
 
 
 def hash_password(password: str) -> str:
-    """Hash plaintext password using bcrypt."""
-    pwd_bytes = password.encode("utf-8")[:72]
+    """Hash plaintext password using bcrypt.
+
+    Raises:
+        AppException(400): If password exceeds bcrypt's 72-byte max length limit.
+    """
+    pwd_bytes = password.encode("utf-8")
+    if len(pwd_bytes) > 72:
+        raise AppException(
+            message="Password exceeds maximum allowed length of 72 bytes.",
+            status_code=400,
+        )
     return bcrypt.hashpw(pwd_bytes, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify plaintext password against bcrypt hash."""
+    pwd_bytes = plain_password.encode("utf-8")
+    if len(pwd_bytes) > 72:
+        return False
     try:
-        pwd_bytes = plain_password.encode("utf-8")[:72]
         return bcrypt.checkpw(pwd_bytes, hashed_password.encode("utf-8"))
     except Exception:
         return False

@@ -1,10 +1,11 @@
 from typing import Optional
+import uuid
 
 from personal_ai.application.experience.classifier import ExperienceClassifier
 from personal_ai.application.experience.promotion import PromotionStrategy
 from personal_ai.config.settings import get_settings
 from personal_ai.core.logger import get_logger
-from personal_ai.db.models import Message
+from personal_ai.db.models import ExperienceClassificationModel, Message
 from personal_ai.db.repositories.sqlalchemy_experience_classification_repository import (
     SQLAlchemyExperienceClassificationRepository,
 )
@@ -48,6 +49,7 @@ class AIExperiencePromotionStrategy(PromotionStrategy):
             else settings.experience_classifier_min_importance
         )
         self._classification_repo = classification_repo
+        self._last_classification_model: Optional[ExperienceClassificationModel] = None
 
     def evaluate(self, message: Message, explicit_signal: bool = False) -> bool:
         """Sync fallback evaluation signature for PromotionStrategy interface compatibility."""
@@ -74,7 +76,7 @@ class AIExperiencePromotionStrategy(PromotionStrategy):
         # Save classification provenance record to database if repository is provided
         if self._classification_repo:
             try:
-                await self._classification_repo.create(
+                self._last_classification_model = await self._classification_repo.create(
                     result=result,
                     source_message_id=message.id,
                 )
@@ -99,3 +101,19 @@ class AIExperiencePromotionStrategy(PromotionStrategy):
         )
 
         return should_promote, result
+
+    async def update_classification_experience_id(self, experience_id: uuid.UUID) -> None:
+        """Link the last created classification record to the promoted Experience ID.
+
+        Args:
+            experience_id: Promoted Experience UUID.
+        """
+        if self._classification_repo and self._last_classification_model:
+            try:
+                await self._classification_repo.update_experience_id(
+                    classification_id=self._last_classification_model.id,
+                    experience_id=experience_id,
+                )
+                self._last_classification_model.experience_id = experience_id
+            except Exception as exc:
+                logger.error("Failed to link classification record to experience_id: %s", exc)

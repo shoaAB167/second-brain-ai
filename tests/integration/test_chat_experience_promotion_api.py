@@ -13,9 +13,10 @@ from personal_ai.application.experience import (
     RecordExperience,
 )
 from personal_ai.core.auth import create_access_token
-from personal_ai.db.models import Base, ExperienceModel, Message
+from personal_ai.db.models import Base, ExperienceModel, Message, User
 from personal_ai.db.repositories import SQLAlchemyExperienceRepository
 from personal_ai.db.session import get_db_session
+from personal_ai.infrastructure.experience import SQLAlchemyBackgroundExperienceProcessor
 from personal_ai.llm import LLMClient, get_llm_client
 from personal_ai.llm.models import LLMResponse
 from personal_ai.main import app
@@ -52,15 +53,24 @@ def setup_chat_promotion_db(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(test_engine.dispose())
 
 
-def get_auth_headers() -> dict[str, str]:
-    """Helper to generate Authorization header for a test user."""
-    token = create_access_token(user_id=uuid.uuid4())
-    return {"Authorization": f"Bearer {token}"}
+def create_real_test_user(email: str = "promouser@example.com") -> tuple[uuid.UUID, dict[str, str]]:
+    """Helper to create a real User row in test DB and return (user_id, headers)."""
+    async def _create() -> User:
+        async with test_session_factory() as session:
+            user = User(email=email, password_hash="hashedpass123")
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return user
+
+    user = asyncio.run(_create())
+    token = create_access_token(user_id=user.id)
+    return user.id, {"Authorization": f"Bearer {token}"}
 
 
 def test_chat_promotion_creates_experience_linked_to_user_message() -> None:
-    """Verify authenticated chat request creates user Message and promoted Experience linked via source_message_id."""
-    headers = get_auth_headers()
+    """Requirement G: Verify authenticated chat request creates user Message and promoted Experience linked via source_message_id."""
+    user_id, headers = create_real_test_user("promotest@example.com")
     mock_llm_client = MagicMock(spec=LLMClient)
     mock_llm_client.generate_response = AsyncMock(
         return_value=LLMResponse(
@@ -72,18 +82,12 @@ def test_chat_promotion_creates_experience_linked_to_user_message() -> None:
     )
     app.dependency_overrides[get_llm_client] = lambda: mock_llm_client
 
-    from personal_ai.api.routers.chat import get_experience_promotion_service
-
-    async def override_chat_promotion_service() -> ExperiencePromotionService:
-        async with test_session_factory() as session:
-            repo = SQLAlchemyExperienceRepository(session=session)
-            record_exp = RecordExperience(repository=repo)
-            return ExperiencePromotionService(
-                record_experience=record_exp,
-                strategy=AlwaysPromoteUserStrategy(),
-            )
-
-    app.dependency_overrides[get_experience_promotion_service] = override_chat_promotion_service
+    from personal_ai.api.routers.chat import get_background_experience_processor
+    app.dependency_overrides[get_background_experience_processor] = lambda: SQLAlchemyBackgroundExperienceProcessor(
+        session_factory=test_session_factory,
+        llm_client=mock_llm_client,
+        strategy=AlwaysPromoteUserStrategy(),
+    )
 
     user_prompt = "I started learning FastAPI today."
     payload = {"message": user_prompt}
@@ -92,7 +96,7 @@ def test_chat_promotion_creates_experience_linked_to_user_message() -> None:
     assert response.status_code == 200
 
     # Give background promotion task time to run
-    asyncio.run(asyncio.sleep(0.1))
+    asyncio.run(asyncio.sleep(0.15))
 
     # Verify that both Message and Experience were persisted and linked via source_message_id
     async def verify_db() -> None:
@@ -112,5 +116,38 @@ def test_chat_promotion_creates_experience_linked_to_user_message() -> None:
             assert exp_model.source == "CHAT"
             assert exp_model.status == "RECEIVED"
             assert exp_model.source_message_id == user_msg.id
+            assert exp_model.user_id == user_id
 
     asyncio.run(verify_db())
+
+
+def test_duplicate_concurrent_promotion_race_handled_gracefully() -> None:
+    """Requirement I: Verify duplicate concurrent promotion on same source_message_id is safely handled."""
+    user_id, _ = create_real_test_user("racetest@example.com")
+
+    async def run_race() -> None:
+        async with test_session_factory() as session:
+            msg = Message(conversation_id=uuid.uuid4(), role="user", content="Race condition message")
+            session.add(msg)
+            await session.commit()
+            await session.refresh(msg)
+
+            repo = SQLAlchemyExperienceRepository(session=session)
+            record_exp = RecordExperience(repository=repo)
+            service = ExperiencePromotionService(
+                record_experience=record_exp,
+                strategy=AlwaysPromoteUserStrategy(),
+                experience_repo=repo,
+            )
+
+            # First promotion succeeds
+            res1 = await service.promote_message(message=msg, user_id=user_id)
+            assert res1.promoted is True
+            assert res1.experience_id is not None
+
+            # Second promotion attempt on same source_message_id is gracefully handled without error
+            res2 = await service.promote_message(message=msg, user_id=user_id)
+            assert res2.promoted is False
+            assert res2.experience_id == res1.experience_id
+
+    asyncio.run(run_race())

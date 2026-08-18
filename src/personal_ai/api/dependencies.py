@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from personal_ai.application.auth.auth_service import AuthService
 from personal_ai.core.auth import decode_access_token
 from personal_ai.core.exceptions import AppException
+from personal_ai.db.repositories.base import UserRepository
 from personal_ai.db.repositories.sqlalchemy_conversation_repository import (
     SQLAlchemyConversationRepository,
 )
@@ -23,13 +24,13 @@ security = HTTPBearer(auto_error=False)
 
 async def get_user_repository(
     session: AsyncSession = Depends(get_db_session),
-) -> SQLAlchemyUserRepository:
+) -> UserRepository:
     """Dependency providing UserRepository instance."""
     return SQLAlchemyUserRepository(session=session)
 
 
 async def get_auth_service(
-    user_repo: SQLAlchemyUserRepository = Depends(get_user_repository),
+    user_repo: UserRepository = Depends(get_user_repository),
 ) -> AuthService:
     """Dependency providing AuthService instance."""
     return AuthService(user_repo=user_repo)
@@ -49,17 +50,19 @@ async def get_chat_service(
 
 async def get_current_user_id(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    user_repo: UserRepository = Depends(get_user_repository),
 ) -> uuid.UUID:
-    """FastAPI dependency to extract and validate authenticated user_id from Bearer JWT.
+    """FastAPI dependency to extract, validate, and verify authenticated user existence from Bearer JWT.
 
     Args:
         credentials: Captured Authorization Bearer credentials header.
+        user_repo: Injected UserRepository abstraction.
 
     Returns:
         uuid.UUID: The authenticated user's unique UUID.
 
     Raises:
-        AppException(401): If authorization header is missing, invalid, or expired.
+        AppException(401): If authorization token is missing, invalid, expired, or user does not exist.
     """
     if not credentials or not credentials.credentials:
         raise AppException(
@@ -67,4 +70,12 @@ async def get_current_user_id(
             status_code=401,
         )
 
-    return decode_access_token(credentials.credentials)
+    user_id = decode_access_token(credentials.credentials)
+    user = await user_repo.get_user_by_id(user_id)
+    if not user:
+        raise AppException(
+            message="Invalid authentication credentials.",
+            status_code=401,
+        )
+
+    return user.id

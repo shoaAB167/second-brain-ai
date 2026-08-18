@@ -2,6 +2,7 @@ from typing import Optional
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from personal_ai.db.models import ExperienceModel
@@ -27,11 +28,13 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
     async def create(self, experience: Experience) -> Experience:
         """Persist a new Experience entity to PostgreSQL.
 
+        Enforces source_message_id unique constraint race condition safety.
+
         Args:
             experience: Domain Experience entity to persist.
 
         Returns:
-            Experience: Persisted Experience domain entity.
+            Experience: Persisted Experience domain entity (or existing on duplicate race).
         """
         user_id_val = uuid.UUID(str(experience.user_id)) if experience.user_id else None
         model = ExperienceModel(
@@ -43,10 +46,18 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             status=experience.status.value if hasattr(experience.status, "value") else str(experience.status),
             created_at=experience.created_at,
         )
-        self._session.add(model)
-        await self._session.commit()
 
-        return self._model_to_domain(model)
+        try:
+            self._session.add(model)
+            await self._session.commit()
+            return self._model_to_domain(model)
+        except IntegrityError:
+            await self._session.rollback()
+            if experience.source_message_id:
+                existing = await self.get_by_source_message_id(experience.source_message_id)
+                if existing:
+                    return existing
+            raise
 
     async def get_by_id(self, experience_id: uuid.UUID) -> Optional[Experience]:
         """Retrieve an Experience entity by UUID.

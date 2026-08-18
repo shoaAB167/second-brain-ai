@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 import uuid
 
@@ -5,7 +6,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from personal_ai.application.experience import ExperiencePromotionService
+from personal_ai.application.experience.background_processor import (
+    BackgroundExperienceProcessor,
+)
 from personal_ai.core.exceptions import AppException
 from personal_ai.db.models import Base, MessageRole
 from personal_ai.db.repositories import (
@@ -117,33 +120,37 @@ async def test_chat_service_reuses_existing_conversation(db_session: AsyncSessio
 
 
 @pytest.mark.asyncio
-async def test_chat_service_background_experience_promotion_failure_does_not_break_chat(
-    db_session: AsyncSession,
-) -> None:
-    """29, B1, B2. Verify background experience promotion failure does NOT break chat or streaming."""
+async def test_sync_chat_does_not_wait_for_classification(db_session: AsyncSession) -> None:
+    """Requirement A: Verify synchronous chat does NOT wait for background experience processor."""
     repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
     conversation = await repo.create_conversation()
 
     mock_llm_client = MagicMock(spec=LLMClient)
     mock_llm_client.generate_response = AsyncMock(
-        return_value=LLMResponse(content="Response despite promo error", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+        return_value=LLMResponse(content="Sync chat response", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
     )
 
-    mock_promo_service = MagicMock(spec=ExperiencePromotionService)
-    mock_promo_service.promote_message = AsyncMock(side_effect=RuntimeError("Promotion system crash!"))
+    slow_bg_processor = MagicMock(spec=BackgroundExperienceProcessor)
+
+    async def slow_bg_promo(*args, **kwargs):
+        await asyncio.sleep(1.0)
+
+    slow_bg_processor.process_background_promotion = AsyncMock(side_effect=slow_bg_promo)
 
     service = ChatService(
         llm_client=mock_llm_client,
         conversation_repo=repo,
-        experience_promotion_service=mock_promo_service,
+        bg_processor=slow_bg_processor,
     )
 
-    # Chat should complete cleanly despite background classification error
+    start_time = asyncio.get_event_loop().time()
     response = await service.process_chat(
-        ChatRequest(conversation_id=conversation.id, message="Prompt with failing promo")
+        ChatRequest(conversation_id=conversation.id, message="Fast sync request")
     )
+    elapsed = asyncio.get_event_loop().time() - start_time
 
-    assert response.response == "Response despite promo error"
+    assert response.response == "Sync chat response"
+    assert elapsed < 0.2  # Must finish immediately without waiting for slow_bg_promo (1.0s)
 
 
 @pytest.mark.asyncio

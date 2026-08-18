@@ -45,7 +45,7 @@ class ExperiencePromotionService:
 
     Ensures ONLY user messages are promoted, original text is preserved verbatim,
     provenance link (source_message_id) is established, duplicate promotions are blocked,
-    and authenticated user ownership is enforced.
+    classification records are linked via experience_id, and authenticated user ownership is enforced.
     """
 
     def __init__(
@@ -73,7 +73,7 @@ class ExperiencePromotionService:
     ) -> PromotionResult:
         """Evaluate and conditionally promote a user Message to an Experience.
 
-        Enforces duplicate protection (one message -> max 1 experience) and user ownership.
+        Enforces duplicate protection (one message -> max 1 experience), classification linking, and user ownership.
 
         Args:
             message: Raw user Message entity.
@@ -105,12 +105,28 @@ class ExperiencePromotionService:
         if not should_promote:
             return PromotionResult(promoted=False)
 
-        experience = await self._record_experience.execute(
-            content=message.content,
-            source=ExperienceSource.CHAT,
-            user_id=str(user_id) if user_id else None,
-            source_message_id=message.id,
-        )
+        try:
+            experience = await self._record_experience.execute(
+                content=message.content,
+                source=ExperienceSource.CHAT,
+                user_id=str(user_id) if user_id else None,
+                source_message_id=message.id,
+            )
+        except Exception:
+            # Handle duplicate promotion race condition safely
+            if self._experience_repo:
+                existing = await self._experience_repo.get_by_source_message_id(message.id)
+                if existing:
+                    return PromotionResult(
+                        promoted=False,
+                        experience_id=existing.id,
+                        experience=existing,
+                    )
+            raise
+
+        # Link classification record experience_id to created Experience
+        if hasattr(self._strategy, "update_classification_experience_id"):
+            await self._strategy.update_classification_experience_id(experience.id)
 
         return PromotionResult(
             promoted=True,

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from personal_ai.api.dependencies import get_current_user_id, get_db_session, get_llm_client
 from personal_ai.application.experience import (
     AIExperiencePromotionStrategy,
+    BackgroundExperienceProcessor,
     ExperienceClassifier,
     ExperiencePromotionService,
     RecordExperience,
@@ -16,6 +17,8 @@ from personal_ai.db.repositories import (
     SQLAlchemyExperienceClassificationRepository,
     SQLAlchemyExperienceRepository,
 )
+from personal_ai.db.session import AsyncSessionFactory
+from personal_ai.infrastructure.experience import SQLAlchemyBackgroundExperienceProcessor
 from personal_ai.llm import LLMClient
 from personal_ai.models.chat import ChatRequest, ChatResponse
 from personal_ai.services.chat_service import ChatService
@@ -30,39 +33,26 @@ def get_conversation_repository(
     return SQLAlchemyConversationRepository(session=session)
 
 
-def get_experience_promotion_service(
-    session: AsyncSession = Depends(get_db_session),
+def get_background_experience_processor(
     llm_client: LLMClient = Depends(get_llm_client),
-) -> ExperiencePromotionService:
-    """Dependency provider constructing ExperiencePromotionService with AIExperiencePromotionStrategy."""
-    exp_repo = SQLAlchemyExperienceRepository(session=session)
-    record_exp = RecordExperience(repository=exp_repo)
-    classification_repo = SQLAlchemyExperienceClassificationRepository(session=session)
-
-    classifier = ExperienceClassifier(llm_client=llm_client)
-    strategy = AIExperiencePromotionStrategy(
-        classifier=classifier,
-        classification_repo=classification_repo,
-    )
-    return ExperiencePromotionService(
-        record_experience=record_exp,
-        strategy=strategy,
-        experience_repo=exp_repo,
+) -> BackgroundExperienceProcessor:
+    """Dependency provider constructing SQLAlchemyBackgroundExperienceProcessor abstraction."""
+    return SQLAlchemyBackgroundExperienceProcessor(
+        session_factory=AsyncSessionFactory,
+        llm_client=llm_client,
     )
 
 
 def get_chat_service(
     llm_client: LLMClient = Depends(get_llm_client),
     conversation_repo: ConversationRepository = Depends(get_conversation_repository),
-    experience_promotion_service: ExperiencePromotionService = Depends(
-        get_experience_promotion_service
-    ),
+    bg_processor: BackgroundExperienceProcessor = Depends(get_background_experience_processor),
 ) -> ChatService:
-    """Dependency provider for ChatService, injecting repository, LLM, and promotion abstractions."""
+    """Dependency provider for ChatService, injecting repository, LLM, and background processor abstractions."""
     return ChatService(
         llm_client=llm_client,
         conversation_repo=conversation_repo,
-        experience_promotion_service=experience_promotion_service,
+        bg_processor=bg_processor,
     )
 
 

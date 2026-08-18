@@ -2,21 +2,11 @@ import asyncio
 from typing import AsyncGenerator, List, Optional
 import uuid
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-
-from personal_ai.application.experience import (
-    AIExperiencePromotionStrategy,
-    ExperienceClassifier,
-    ExperiencePromotionService,
-    RecordExperience,
+from personal_ai.application.experience.background_processor import (
+    BackgroundExperienceProcessor,
 )
 from personal_ai.core.exceptions import AppException
 from personal_ai.core.logger import get_logger
-from personal_ai.db.models import Message
-from personal_ai.db.repositories import (
-    SQLAlchemyExperienceClassificationRepository,
-    SQLAlchemyExperienceRepository,
-)
 from personal_ai.db.repositories.base import ConversationRepository
 from personal_ai.llm.client import LLMClient
 from personal_ai.llm.exceptions import (
@@ -40,32 +30,36 @@ class ChatService:
     """Business logic service for managing chat processing, conversation memory, and user isolation.
 
     Depends exclusively on abstract interfaces.
-    Enforces conversation ownership and background asynchronous experience classification.
+    Enforces conversation ownership and non-blocking background asynchronous experience classification.
     """
 
     def __init__(
         self,
         llm_client: LLMClient,
         conversation_repo: ConversationRepository,
-        experience_promotion_service: Optional[ExperiencePromotionService] = None,
+        bg_processor: Optional[BackgroundExperienceProcessor] = None,
     ) -> None:
-        """Initialize ChatService with abstract dependencies and optional promotion service.
+        """Initialize ChatService with abstract dependencies and optional background processor.
 
         Args:
             llm_client: Abstract LLM client interface.
             conversation_repo: Abstract conversation repository interface.
-            experience_promotion_service: Optional application service for Experience promotion.
+            bg_processor: Abstract background Experience processor interface.
         """
         self._llm_client = llm_client
         self._conversation_repo = conversation_repo
-        self._experience_promotion_service = experience_promotion_service
+        self._bg_processor = bg_processor
 
     async def process_chat(
         self,
         request: ChatRequest,
         user_id: Optional[uuid.UUID] = None,
     ) -> ChatResponse:
-        """Process an incoming chat request, maintaining conversation context synchronously."""
+        """Process an incoming chat request, maintaining conversation context synchronously.
+
+        Experience classification is decoupled into a background task (asyncio.create_task)
+        and NEVER delays or blocks normal chat response generation.
+        """
         # 1. Resolve or create conversation thread with user ownership validation
         if request.conversation_id:
             conversation = await self._conversation_repo.get_conversation(
@@ -120,9 +114,11 @@ class ChatService:
             content=request.message,
         )
 
-        # 5. Experience classification execution (B1 & B2)
-        if self._experience_promotion_service:
-            await self._safe_bg_experience_promotion(user_message, user_id=user_id)
+        # 5. Non-blocking asynchronous Experience classification (CRITICAL Latency Requirement)
+        if self._bg_processor:
+            asyncio.create_task(
+                self._bg_processor.process_background_promotion(user_message, user_id=user_id)
+            )
 
         # 6. Execute LLM completion request
         llm_response = await self._llm_client.generate_response(messages=history)
@@ -150,18 +146,7 @@ class ChatService:
         request: ChatRequest,
         user_id: Optional[uuid.UUID] = None,
     ) -> AsyncGenerator[str, None]:
-        """Process an incoming chat request using Server-Sent Events (SSE) streaming.
-
-        Execution Strategy:
-        -------------------
-        1. Resolve existing conversation or create new conversation matching user_id.
-        2. Retrieve stored conversation messages in chronological order.
-        3. Persist user prompt message to database history first.
-        4. DECOUPLED CLASSIFICATION: Schedule background task for AI Experience classification.
-           Does NOT block or delay the first streamed token!
-        5. CALL STREAM: Invoke LLMClient.stream_response(messages) and stream tokens.
-        6. PERSIST ASSISTANT RESPONSE: Save accumulated assistant text upon stream completion.
-        """
+        """Process an incoming chat request using Server-Sent Events (SSE) streaming."""
         # 1. Resolve or create conversation thread with strict user_id ownership check
         if request.conversation_id:
             conversation = await self._conversation_repo.get_conversation(
@@ -217,11 +202,10 @@ class ChatService:
             content=request.message,
         )
 
-        # 5. Non-blocking asynchronous Experience classification (B1 & B2)
-        # Background task runs concurrently without delaying the first token!
-        if self._experience_promotion_service:
+        # 5. Non-blocking asynchronous Experience classification
+        if self._bg_processor:
             asyncio.create_task(
-                self._safe_bg_experience_promotion(user_message, user_id=user_id)
+                self._bg_processor.process_background_promotion(user_message, user_id=user_id)
             )
 
         accumulated_chunks: List[str] = []
@@ -294,65 +278,3 @@ class ChatService:
                 message="An unexpected error occurred during chat streaming.",
                 conversation_id=conversation.id,
             ).to_sse()
-
-    async def _safe_bg_experience_promotion(
-        self,
-        message: Message,
-        user_id: Optional[uuid.UUID] = None,
-    ) -> None:
-        """Safely execute background Experience promotion in an isolated DB session (B1 & B2)."""
-        if not self._experience_promotion_service:
-            return
-
-        try:
-            # Dynamically inspect active AsyncEngine from conversation_repo session
-            session = getattr(self._conversation_repo, "_session", None)
-            bind = getattr(session, "bind", None) if session else None
-
-            if bind:
-                async with AsyncSession(bind=bind, expire_on_commit=False) as bg_session:
-                    exp_repo = SQLAlchemyExperienceRepository(session=bg_session)
-                    record_exp = RecordExperience(repository=exp_repo)
-                    classification_repo = SQLAlchemyExperienceClassificationRepository(session=bg_session)
-                    classifier = ExperienceClassifier(llm_client=self._llm_client)
-
-                    strategy = getattr(self._experience_promotion_service, "_strategy", None)
-                    if not strategy or hasattr(strategy, "_classifier"):
-                        strategy = AIExperiencePromotionStrategy(
-                            classifier=classifier,
-                            classification_repo=classification_repo,
-                        )
-
-                    bg_service = ExperiencePromotionService(
-                        record_experience=record_exp,
-                        strategy=strategy,
-                        experience_repo=exp_repo,
-                    )
-                    res = await bg_service.promote_message(message=message, user_id=user_id)
-                    if res.promoted:
-                        logger.info(
-                            "Background experience promoted successfully [message_id=%s, experience_id=%s, user_id=%s]",
-                            message.id,
-                            res.experience_id,
-                            user_id,
-                        )
-                    return
-
-            res = await self._experience_promotion_service.promote_message(
-                message=message,
-                user_id=user_id,
-            )
-            if res.promoted:
-                logger.info(
-                    "Background experience promoted successfully [message_id=%s, experience_id=%s, user_id=%s]",
-                    message.id,
-                    res.experience_id,
-                    user_id,
-                )
-        except Exception as exc:
-            logger.error(
-                "Background experience promotion failed safely [message_id=%s, user_id=%s]: %s",
-                message.id,
-                user_id,
-                exc,
-            )

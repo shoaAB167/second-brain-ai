@@ -93,6 +93,21 @@ async def test_too_short_password_rejected(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_password_exceeding_72_bytes_rejected(db_session: AsyncSession) -> None:
+    """Requirement J: Verify password longer than 72 bytes is rejected with HTTP 400."""
+    repo = SQLAlchemyUserRepository(session=db_session)
+    service = AuthService(user_repo=repo)
+
+    long_password = "a" * 73
+    with pytest.raises(AppException) as exc_info:
+        request = RegisterRequest(email="longpw@example.com", password=long_password)
+        await service.register_user(request)
+
+    assert exc_info.value.status_code == 400
+    assert "72 bytes" in exc_info.value.message
+
+
+@pytest.mark.asyncio
 async def test_login_with_correct_credentials_returns_jwt(db_session: AsyncSession) -> None:
     """7 & 8. Verify login with correct credentials returns valid JWT token."""
     repo = SQLAlchemyUserRepository(session=db_session)

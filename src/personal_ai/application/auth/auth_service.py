@@ -29,12 +29,19 @@ class AuthService:
             UserResponse: Safe response representation of created user.
 
         Raises:
-            AppException(400): If email is already registered or password is too short.
+            AppException(400): If email is registered, password < 8 chars, or password > 72 bytes.
         """
         normalized_email = request.email.strip().lower()
         if len(request.password) < 8:
             raise AppException(
                 message="Password must be at least 8 characters long.",
+                status_code=400,
+            )
+
+        pwd_bytes = request.password.encode("utf-8")
+        if len(pwd_bytes) > 72:
+            raise AppException(
+                message="Password exceeds maximum allowed length of 72 bytes.",
                 status_code=400,
             )
 

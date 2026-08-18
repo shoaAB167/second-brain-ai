@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from personal_ai.core.auth import create_access_token
-from personal_ai.db.models import Base, ExperienceModel
+from personal_ai.db.models import Base, ExperienceModel, User
 from personal_ai.db.session import get_db_session
 from personal_ai.main import app
 
@@ -34,9 +34,18 @@ def setup_experience_db(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(test_engine.dispose())
 
 
-def get_auth_headers() -> dict[str, str]:
-    """Helper to generate Authorization header for a test user."""
-    token = create_access_token(user_id=uuid.uuid4())
+def get_auth_headers(email: str = "expuser@example.com") -> dict[str, str]:
+    """Helper to create a real User in DB and generate Authorization header."""
+    async def _create() -> User:
+        async with test_session_factory() as session:
+            user = User(email=email, password_hash="hashedpass")
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return user
+
+    user = asyncio.run(_create())
+    token = create_access_token(user_id=user.id)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -80,7 +89,7 @@ def test_post_experience_empty_content_rejected() -> None:
         "content": "",
         "source": "CHAT",
     }
-    response = client.post("/api/v1/experiences", json=payload, headers=get_auth_headers())
+    response = client.post("/api/v1/experiences", json=payload, headers=get_auth_headers("emptyexp@example.com"))
     assert response.status_code in (400, 422)
 
 
@@ -90,7 +99,7 @@ def test_post_experience_whitespace_content_rejected() -> None:
         "content": "   \n\t ",
         "source": "CHAT",
     }
-    response = client.post("/api/v1/experiences", json=payload, headers=get_auth_headers())
+    response = client.post("/api/v1/experiences", json=payload, headers=get_auth_headers("spaceexp@example.com"))
     assert response.status_code in (400, 422)
 
 
@@ -100,5 +109,5 @@ def test_post_experience_invalid_source_rejected() -> None:
         "content": "Valid content",
         "source": "UNSUPPORTED_SOURCE",
     }
-    response = client.post("/api/v1/experiences", json=payload, headers=get_auth_headers())
+    response = client.post("/api/v1/experiences", json=payload, headers=get_auth_headers("invalidsrc@example.com"))
     assert response.status_code in (400, 422)
