@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from personal_ai.domain.experience.enums import ExperienceType
@@ -41,11 +41,23 @@ class ClassificationResult(BaseModel):
         description="Identifier of the LLM model that generated the classification.",
     )
 
+    @field_validator("is_experience", mode="before")
+    @classmethod
+    def validate_strict_bool(cls, value: Any) -> bool:
+        """Validate that is_experience is strictly a JSON boolean (True/False).
+        Rejects strings ('true', 'false', 'random') and numbers (1, 0).
+        """
+        if type(value) is not bool:
+            raise ValueError(
+                f"is_experience MUST be a strict JSON boolean (true/false), got {type(value).__name__}: {value!r}"
+            )
+        return value
+
     @field_validator("importance", "confidence")
     @classmethod
     def validate_score_range(cls, value: float) -> float:
         """Validate that score is strictly bounded within [0.0, 1.0]."""
-        if not isinstance(value, (int, float)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
             raise ValueError("Score must be a numeric float.")
         val_float = float(value)
         if val_float < 0.0 or val_float > 1.0:

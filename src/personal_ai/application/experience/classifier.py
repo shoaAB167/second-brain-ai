@@ -101,12 +101,12 @@ class ExperienceClassifier:
 
             data: Dict[str, Any] = json.loads(raw_text)
 
-            # Construct and validate ClassificationResult
+            # Construct and validate ClassificationResult passing raw JSON values without bool() coercion
             result = ClassificationResult(
-                is_experience=bool(data.get("is_experience", False)),
+                is_experience=data.get("is_experience"),
                 type=data.get("type"),
-                importance=float(data.get("importance", 0.0)),
-                confidence=float(data.get("confidence", 0.0)),
+                importance=data.get("importance"),
+                confidence=data.get("confidence"),
                 reasoning=data.get("reasoning"),
                 raw_model=llm_response.model,
             )

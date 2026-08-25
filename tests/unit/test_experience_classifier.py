@@ -374,3 +374,116 @@ async def test_case_o_classifier_failure_safe_fallback() -> None:
     assert result.importance == 0.0
     assert result.confidence == 0.0
     assert result.raw_model == "fallback_llm_error"
+
+
+# ==================================================
+# PR #8 BLOCKER TESTS — STRICT JSON BOOLEAN VALIDATION
+# ==================================================
+
+
+@pytest.mark.asyncio
+async def test_strict_bool_validation_string_false_fails_closed() -> None:
+    """Blocker Test 1: {"is_experience": "false", ...} MUST fail closed (return fallback is_experience=False)."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload_str = '{"is_experience": "false", "type": null, "importance": 0.2, "confidence": 0.9}'
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=payload_str, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+    )
+    classifier = ExperienceClassifier(llm_client=mock_llm)
+    res = await classifier.classify("Some text")
+
+    assert res.is_experience is False
+    assert res.type is None
+    assert res.importance == 0.0
+    assert res.confidence == 0.0
+    assert res.raw_model == "fallback_parse_error"
+
+
+@pytest.mark.asyncio
+async def test_strict_bool_validation_string_true_fails_closed() -> None:
+    """Blocker Test 2: {"is_experience": "true", ...} MUST fail closed (return fallback is_experience=False)."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload_str = '{"is_experience": "true", "type": "GOAL", "importance": 0.8, "confidence": 0.9}'
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=payload_str, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+    )
+    classifier = ExperienceClassifier(llm_client=mock_llm)
+    res = await classifier.classify("Some text")
+
+    assert res.is_experience is False
+    assert res.type is None
+    assert res.importance == 0.0
+    assert res.confidence == 0.0
+    assert res.raw_model == "fallback_parse_error"
+
+
+@pytest.mark.asyncio
+async def test_strict_bool_validation_string_random_fails_closed() -> None:
+    """Blocker Test 3: {"is_experience": "random", ...} MUST fail closed (return fallback is_experience=False)."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload_str = '{"is_experience": "random", "type": "GOAL", "importance": 0.8, "confidence": 0.9}'
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=payload_str, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+    )
+    classifier = ExperienceClassifier(llm_client=mock_llm)
+    res = await classifier.classify("Some text")
+
+    assert res.is_experience is False
+    assert res.type is None
+    assert res.importance == 0.0
+    assert res.confidence == 0.0
+    assert res.raw_model == "fallback_parse_error"
+
+
+@pytest.mark.asyncio
+async def test_strict_bool_validation_numeric_one_fails_closed() -> None:
+    """Blocker Test 4: {"is_experience": 1, ...} MUST fail closed (return fallback is_experience=False)."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload_str = '{"is_experience": 1, "type": "GOAL", "importance": 0.8, "confidence": 0.9}'
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=payload_str, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+    )
+    classifier = ExperienceClassifier(llm_client=mock_llm)
+    res = await classifier.classify("Some text")
+
+    assert res.is_experience is False
+    assert res.type is None
+    assert res.importance == 0.0
+    assert res.confidence == 0.0
+    assert res.raw_model == "fallback_parse_error"
+
+
+@pytest.mark.asyncio
+async def test_strict_bool_validation_json_true_succeeds() -> None:
+    """Blocker Test 5: {"is_experience": true, ...} MUST produce valid ClassificationResult with is_experience=True."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload_str = '{"is_experience": true, "type": "GOAL", "importance": 0.8, "confidence": 0.9}'
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=payload_str, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+    )
+    classifier = ExperienceClassifier(llm_client=mock_llm)
+    res = await classifier.classify("Some text")
+
+    assert res.is_experience is True
+    assert res.type == ExperienceType.GOAL
+    assert res.importance == 0.8
+    assert res.confidence == 0.9
+    assert res.raw_model == "gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_strict_bool_validation_json_false_succeeds() -> None:
+    """Blocker Test 6: {"is_experience": false, ...} MUST produce valid ClassificationResult with is_experience=False."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload_str = '{"is_experience": false, "type": null, "importance": 0.1, "confidence": 0.9}'
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=payload_str, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+    )
+    classifier = ExperienceClassifier(llm_client=mock_llm)
+    res = await classifier.classify("Some text")
+
+    assert res.is_experience is False
+    assert res.type is None
+    assert res.importance == 0.1
+    assert res.confidence == 0.9
+    assert res.raw_model == "gpt-4o-mini"
