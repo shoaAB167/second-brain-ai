@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 import uuid
 
 from personal_ai.application.experience.classifier import ExperienceClassifier
@@ -10,6 +10,7 @@ from personal_ai.db.repositories.sqlalchemy_experience_classification_repository
     SQLAlchemyExperienceClassificationRepository,
 )
 from personal_ai.domain.experience import ClassificationResult
+from personal_ai.llm.models import LLMMessage
 
 logger = get_logger(__name__)
 
@@ -58,11 +59,16 @@ class AIExperiencePromotionStrategy(PromotionStrategy):
             return False
         return bool(explicit_signal)
 
-    async def evaluate_async(self, message: Message) -> tuple[bool, Optional[ClassificationResult]]:
+    async def evaluate_async(
+        self,
+        message: Message,
+        context: Optional[List[LLMMessage]] = None,
+    ) -> tuple[bool, Optional[ClassificationResult]]:
         """Asynchronously classify user message and evaluate application promotion policy.
 
         Args:
             message: Raw user Message entity.
+            context: Optional list of recent LLMMessage objects for contextual reference resolution.
 
         Returns:
             tuple[bool, Optional[ClassificationResult]]: (should_promote, classification_result)
@@ -71,7 +77,7 @@ class AIExperiencePromotionStrategy(PromotionStrategy):
         if role_str.lower() != "user":
             return False, None
 
-        result = await self._classifier.classify(message.content)
+        result = await self._classifier.classify(message.content, conversation_context=context)
 
         # Save classification provenance record to database if repository is provided
         if self._classification_repo:

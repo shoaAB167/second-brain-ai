@@ -1,12 +1,14 @@
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Union
+import inspect
+from typing import List, Optional, Union
 import uuid
 
 from personal_ai.application.experience.record_experience import RecordExperience
 from personal_ai.db.models import Message
 from personal_ai.domain.experience import Experience, ExperienceRepository, ExperienceSource
+from personal_ai.llm.models import LLMMessage
 
 
 @dataclass
@@ -71,6 +73,7 @@ class ExperiencePromotionService:
         message: Message,
         explicit_signal: bool = False,
         user_id: Optional[Union[uuid.UUID, str]] = None,
+        context: Optional[List[LLMMessage]] = None,
     ) -> PromotionResult:
         """Evaluate and conditionally promote a user Message to an Experience.
 
@@ -80,6 +83,7 @@ class ExperiencePromotionService:
             message: Raw user Message entity.
             explicit_signal: Application control signal for deterministic promotion.
             user_id: Authenticated user UUID associated with the source conversation.
+            context: Optional bounded prior conversation context for reference resolution.
 
         Returns:
             PromotionResult: Result indicating whether promotion occurred and experience ID.
@@ -99,7 +103,11 @@ class ExperiencePromotionService:
                 )
 
         if hasattr(self._strategy, "evaluate_async"):
-            should_promote, _ = await self._strategy.evaluate_async(message)
+            sig = inspect.signature(self._strategy.evaluate_async)
+            if "context" in sig.parameters:
+                should_promote, _ = await self._strategy.evaluate_async(message, context=context)
+            else:
+                should_promote, _ = await self._strategy.evaluate_async(message)
         else:
             should_promote = self._strategy.evaluate(message, explicit_signal=explicit_signal)
 
