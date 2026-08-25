@@ -12,6 +12,7 @@ from personal_ai.domain.experience import (
     ExperienceRepository,
     ExperienceSource,
     ExperienceStatus,
+    ExperienceType,
 )
 
 
@@ -40,11 +41,18 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
         user_id_val = uuid.UUID(str(experience.user_id)) if experience.user_id else None
         source_msg_val = uuid.UUID(str(experience.source_message_id)) if experience.source_message_id else None
 
+        exp_type_val = (
+            experience.type.value if hasattr(experience.type, "value") else str(experience.type)
+        ) if experience.type else None
+
         model = ExperienceModel(
             id=experience.id,
             user_id=user_id_val,
             source_message_id=source_msg_val,
             content=experience.content,
+            type=exp_type_val,
+            domain=experience.domain,
+            extraction_confidence=experience.extraction_confidence,
             source=experience.source.value if hasattr(experience.source, "value") else str(experience.source),
             status=experience.status.value if hasattr(experience.status, "value") else str(experience.status),
             created_at=experience.created_at,
@@ -109,11 +117,21 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
     @staticmethod
     def _model_to_domain(model: ExperienceModel) -> Experience:
         """Convert SQLAlchemy ExperienceModel to domain Experience entity."""
+        exp_type = None
+        if model.type:
+            try:
+                exp_type = ExperienceType(model.type)
+            except ValueError:
+                exp_type = None
+
         return Experience(
             id=model.id,
-            user_id=model.user_id,
+            user_id=str(model.user_id) if model.user_id else None,
             source_message_id=model.source_message_id,
             content=model.content,
+            type=exp_type,
+            domain=model.domain,
+            extraction_confidence=model.extraction_confidence,
             source=ExperienceSource(model.source),
             status=ExperienceStatus(model.status),
             created_at=model.created_at,

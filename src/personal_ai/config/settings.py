@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     experience_classifier_min_confidence: float = 0.70
     experience_classifier_min_importance: float = 0.50
 
+    # Experience Extractor Settings
+    experience_extractor_model: Optional[str] = None
+
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(

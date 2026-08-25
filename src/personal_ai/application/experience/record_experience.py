@@ -7,11 +7,12 @@ from personal_ai.domain.experience import (
     ExperienceRepository,
     ExperienceSource,
     ExperienceStatus,
+    ExperienceType,
 )
 
 
 class RecordExperience:
-    """Application use case for recording a raw, uninterpreted life Experience observation.
+    """Application use case for recording a structured or raw life Experience observation.
 
     Orchestrates validation, domain object creation, status assignment (RECEIVED),
     and persistence through the abstract ExperienceRepository interface.
@@ -33,14 +34,20 @@ class RecordExperience:
         source: Union[ExperienceSource, str],
         user_id: Optional[str] = None,
         source_message_id: Optional[uuid.UUID] = None,
+        type: Optional[Union[ExperienceType, str]] = None,
+        domain: Optional[str] = None,
+        extraction_confidence: Optional[float] = None,
     ) -> Experience:
         """Execute the RecordExperience use case.
 
         Args:
-            content: Raw user-provided experience text.
+            content: Raw or extracted user experience text.
             source: Source channel (e.g. CHAT, FILE).
             user_id: Optional user identifier.
             source_message_id: Optional UUID of the originating user Message.
+            type: Optional ExperienceType or category string.
+            domain: Optional categorical domain string.
+            extraction_confidence: Optional extractor confidence float score.
 
         Returns:
             Experience: The created and persisted domain Experience entity.
@@ -72,6 +79,9 @@ class RecordExperience:
                 source=exp_source,
                 user_id=user_id,
                 source_message_id=source_message_id,
+                type=type,
+                domain=domain,
+                extraction_confidence=extraction_confidence,
                 status=ExperienceStatus.RECEIVED,
             )
         except ValueError as exc:

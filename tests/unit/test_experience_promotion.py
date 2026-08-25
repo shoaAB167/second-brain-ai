@@ -77,6 +77,9 @@ async def test_experience_promotion_service_promotes_user_message_with_user_id()
         source=ExperienceSource.CHAT,
         user_id=str(user_id),
         source_message_id=msg_id,
+        type=None,
+        domain=None,
+        extraction_confidence=None,
     )
 
 

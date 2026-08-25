@@ -5,10 +5,20 @@ import inspect
 from typing import List, Optional, Union
 import uuid
 
+from personal_ai.application.experience.extractor import ExperienceExtractor
 from personal_ai.application.experience.record_experience import RecordExperience
+from personal_ai.core.logger import get_logger
 from personal_ai.db.models import Message
-from personal_ai.domain.experience import Experience, ExperienceRepository, ExperienceSource
+from personal_ai.domain.experience import (
+    ClassificationResult,
+    Experience,
+    ExperienceExtractionResult,
+    ExperienceRepository,
+    ExperienceSource,
+)
 from personal_ai.llm.models import LLMMessage
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -46,7 +56,7 @@ class DeterministicPromotionStrategy(PromotionStrategy):
 class ExperiencePromotionService:
     """Application service for promoting existing user Messages into Experience entities.
 
-    Ensures ONLY user messages are promoted, original text is preserved verbatim,
+    Ensures ONLY user messages are promoted, original text is preserved verbatim or extracted concisely,
     provenance link (source_message_id) is established, duplicate promotions are blocked,
     classification records are linked via experience_id, and authenticated user ownership is enforced.
     """
@@ -56,6 +66,7 @@ class ExperiencePromotionService:
         record_experience: RecordExperience,
         strategy: Optional[PromotionStrategy] = None,
         experience_repo: Optional[ExperienceRepository] = None,
+        extractor: Optional[ExperienceExtractor] = None,
     ) -> None:
         """Initialize ExperiencePromotionService.
 
@@ -63,10 +74,12 @@ class ExperiencePromotionService:
             record_experience: RecordExperience application use case.
             strategy: Optional PromotionStrategy implementation.
             experience_repo: Optional ExperienceRepository for duplicate protection checks.
+            extractor: Optional ExperienceExtractor for structured experience extraction.
         """
         self._record_experience = record_experience
         self._strategy = strategy or DeterministicPromotionStrategy()
         self._experience_repo = experience_repo
+        self._extractor = extractor
 
     async def promote_message(
         self,
@@ -102,24 +115,54 @@ class ExperiencePromotionService:
                     experience=existing,
                 )
 
+        classification_res: Optional[ClassificationResult] = None
         if hasattr(self._strategy, "evaluate_async"):
             sig = inspect.signature(self._strategy.evaluate_async)
             if "context" in sig.parameters:
-                should_promote, _ = await self._strategy.evaluate_async(message, context=context)
+                should_promote, classification_res = await self._strategy.evaluate_async(message, context=context)
             else:
-                should_promote, _ = await self._strategy.evaluate_async(message)
+                should_promote, classification_res = await self._strategy.evaluate_async(message)
         else:
             should_promote = self._strategy.evaluate(message, explicit_signal=explicit_signal)
 
         if not should_promote:
             return PromotionResult(promoted=False)
 
+        # Execute structured extraction ONLY IF classified as an experience and promotion policy passes
+        extraction_res: Optional[ExperienceExtractionResult] = None
+        if self._extractor and classification_res and classification_res.is_experience:
+            try:
+                extraction_res = await self._extractor.extract(
+                    content=message.content,
+                    classification=classification_res,
+                    conversation_context=context,
+                )
+            except Exception as exc:
+                logger.error("Extraction failed safely during message promotion: %s", exc)
+
+        # Determine target content, type, domain, and extraction_confidence to persist
+        target_content = (
+            extraction_res.content
+            if (extraction_res and extraction_res.content and extraction_res.content.strip())
+            else message.content
+        )
+        target_type = (
+            extraction_res.type
+            if (extraction_res and extraction_res.type)
+            else (classification_res.type if classification_res else None)
+        )
+        target_domain = extraction_res.domain if extraction_res else None
+        target_confidence = extraction_res.confidence if extraction_res else None
+
         try:
             experience = await self._record_experience.execute(
-                content=message.content,
+                content=target_content,
                 source=ExperienceSource.CHAT,
                 user_id=str(user_id) if user_id else None,
                 source_message_id=message.id,
+                type=target_type,
+                domain=target_domain,
+                extraction_confidence=target_confidence,
             )
         except Exception:
             # Handle duplicate promotion race condition safely with retry loop

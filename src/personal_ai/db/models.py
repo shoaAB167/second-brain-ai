@@ -117,7 +117,7 @@ class Message(Base):
 
 
 class ExperienceModel(Base):
-    """ORM Model representing a raw, uninterpreted life Experience record."""
+    """ORM Model representing a raw or structured life Experience record."""
 
     __tablename__ = "experiences"
 
@@ -138,6 +138,9 @@ class ExperienceModel(Base):
         index=True,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    domain: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    extraction_confidence: Mapped[Optional[float]] = mapped_column(nullable=True)
     source: Mapped[str] = mapped_column(
         SQLEnum(
             "CHAT", "FILE", "EMAIL", "CALENDAR", "GITHUB", "VOICE", "API", "MANUAL", "TOOL",
