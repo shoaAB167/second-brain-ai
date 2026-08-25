@@ -3,6 +3,7 @@ from personal_ai.application.experience.background_processor import (
     BackgroundExperienceProcessor,
 )
 from personal_ai.application.experience.classifier import ExperienceClassifier
+from personal_ai.application.experience.extractor import ExperienceExtractor
 from personal_ai.application.experience.promotion import (
     DeterministicPromotionStrategy,
     ExperiencePromotionService,
@@ -14,6 +15,7 @@ from personal_ai.application.experience.record_experience import RecordExperienc
 __all__ = [
     "RecordExperience",
     "ExperienceClassifier",
+    "ExperienceExtractor",
     "AIExperiencePromotionStrategy",
     "ExperiencePromotionService",
     "PromotionStrategy",

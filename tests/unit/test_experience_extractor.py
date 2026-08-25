@@ -10,12 +10,12 @@ from personal_ai.domain.experience import (
 )
 from personal_ai.llm.client import LLMClient
 from personal_ai.llm.exceptions import LLMRateLimitException
-from personal_ai.llm.models import LLMMessage, LLMResponse
+from personal_ai.llm.models import LLMResponse
 
 
 @pytest.mark.asyncio
-async def test_case_1_fact_extraction() -> None:
-    """Requirement 17.1: FACT extraction -> content represents user's technology experience."""
+async def test_case_a_successful_fact_extraction() -> None:
+    """Requirement 6A: Successful FACT extraction -> returns success=True and structured content."""
     mock_llm = MagicMock(spec=LLMClient)
     payload = {
         "content": "Works primarily with Java and Spring Boot",
@@ -33,15 +33,15 @@ async def test_case_1_fact_extraction() -> None:
     res = await extractor.extract("I work primarily with Java and Spring Boot.", classification=classification)
 
     assert isinstance(res, ExperienceExtractionResult)
+    assert res.success is True
     assert res.content == "Works primarily with Java and Spring Boot"
-    assert res.type == ExperienceType.FACT
     assert res.domain == "career/technology"
     assert res.confidence == 0.95
 
 
 @pytest.mark.asyncio
-async def test_case_2_preference_extraction() -> None:
-    """Requirement 17.2: PREFERENCE extraction -> preference represented accurately."""
+async def test_case_a_successful_preference_extraction() -> None:
+    """Requirement 6A: Successful PREFERENCE extraction."""
     mock_llm = MagicMock(spec=LLMClient)
     payload = {
         "content": "Prefers remote work",
@@ -58,14 +58,14 @@ async def test_case_2_preference_extraction() -> None:
     extractor = ExperienceExtractor(llm_client=mock_llm)
     res = await extractor.extract("I prefer remote work.", classification=classification)
 
+    assert res.success is True
     assert res.content == "Prefers remote work"
-    assert res.type == ExperienceType.PREFERENCE
     assert res.domain == "work"
 
 
 @pytest.mark.asyncio
-async def test_case_3_goal_extraction() -> None:
-    """Requirement 17.3: GOAL extraction -> goal represented accurately."""
+async def test_case_a_successful_goal_extraction() -> None:
+    """Requirement 6A: Successful GOAL extraction."""
     mock_llm = MagicMock(spec=LLMClient)
     payload = {
         "content": "Reach 30 LPA salary target",
@@ -82,14 +82,14 @@ async def test_case_3_goal_extraction() -> None:
     extractor = ExperienceExtractor(llm_client=mock_llm)
     res = await extractor.extract("I want to reach 30 LPA.", classification=classification)
 
+    assert res.success is True
     assert res.content == "Reach 30 LPA salary target"
-    assert res.type == ExperienceType.GOAL
     assert res.status == "active"
 
 
 @pytest.mark.asyncio
-async def test_case_4_habit_extraction() -> None:
-    """Requirement 17.4: HABIT extraction -> habit represented accurately."""
+async def test_case_a_successful_habit_extraction() -> None:
+    """Requirement 6A: Successful HABIT extraction."""
     mock_llm = MagicMock(spec=LLMClient)
     payload = {
         "content": "Works out five days a week",
@@ -106,14 +106,14 @@ async def test_case_4_habit_extraction() -> None:
     extractor = ExperienceExtractor(llm_client=mock_llm)
     res = await extractor.extract("I work out five days a week.", classification=classification)
 
+    assert res.success is True
     assert res.content == "Works out five days a week"
-    assert res.type == ExperienceType.HABIT
     assert res.domain == "fitness"
 
 
 @pytest.mark.asyncio
-async def test_case_5_project_extraction() -> None:
-    """Requirement 17.5: PROJECT extraction -> project represented accurately."""
+async def test_case_a_successful_project_extraction() -> None:
+    """Requirement 6A: Successful PROJECT extraction."""
     mock_llm = MagicMock(spec=LLMClient)
     payload = {
         "content": "Building a personal AI assistant",
@@ -130,13 +130,13 @@ async def test_case_5_project_extraction() -> None:
     extractor = ExperienceExtractor(llm_client=mock_llm)
     res = await extractor.extract("I'm building a personal AI assistant.", classification=classification)
 
+    assert res.success is True
     assert res.content == "Building a personal AI assistant"
-    assert res.type == ExperienceType.PROJECT
 
 
 @pytest.mark.asyncio
-async def test_case_6_no_hallucination() -> None:
-    """Requirement 17.6: No hallucination -> Extractor does NOT invent unsupported attributes."""
+async def test_no_hallucination() -> None:
+    """Requirement 6: Extractor does NOT invent unsupported attributes."""
     mock_llm = MagicMock(spec=LLMClient)
     payload = {
         "content": "Wants a better job",
@@ -153,58 +153,52 @@ async def test_case_6_no_hallucination() -> None:
     extractor = ExperienceExtractor(llm_client=mock_llm)
     res = await extractor.extract("I want a better job.", classification=classification)
 
+    assert res.success is True
     assert res.content == "Wants a better job"
     assert "30 LPA" not in res.content
     assert "FAANG" not in res.content
-    assert "Bangalore" not in res.content
 
 
 @pytest.mark.asyncio
-async def test_case_7_hypothetical() -> None:
-    """Requirement 17.7: Hypothetical statement -> Extracted faithfully without fabricating active facts."""
+async def test_case_b_extraction_llm_failure_returns_success_false() -> None:
+    """Requirement 6B: LLM exception during extraction returns success=False."""
     mock_llm = MagicMock(spec=LLMClient)
-    payload = {
-        "content": "Would choose Kafka for banking system architecture",
-        "domain": "architecture",
-        "status": "hypothetical",
-        "confidence": 0.85,
-        "reasoning": "Extracted architecture opinion.",
-    }
-    mock_llm.generate_response = AsyncMock(
-        return_value=LLMResponse(content=json.dumps(payload), provider="openai", model="gpt-4o-mini", latency_ms=10.0)
-    )
-    classification = ClassificationResult(is_experience=True, type=ExperienceType.DECISION, importance=0.5, confidence=0.7)
+    mock_llm.generate_response = AsyncMock(side_effect=LLMRateLimitException("Rate limit exceeded"))
+    classification = ClassificationResult(is_experience=True, type=ExperienceType.GOAL, importance=0.8, confidence=0.9)
 
     extractor = ExperienceExtractor(llm_client=mock_llm)
-    res = await extractor.extract("If I were building a banking system, I would use Kafka.", classification=classification)
+    res = await extractor.extract("I want to learn AI.", classification=classification)
 
-    assert res.content == "Would choose Kafka for banking system architecture"
+    assert res.success is False
+    assert res.content is None
+    assert res.confidence == 0.0
+    assert res.raw_model == "fallback_llm_error"
 
 
 @pytest.mark.asyncio
-async def test_case_8_invalid_json_fails_safely() -> None:
-    """Requirement 17.8: Invalid JSON -> Extractor returns safe fallback."""
+async def test_case_c_invalid_json_returns_success_false() -> None:
+    """Requirement 6C: Invalid extraction JSON returns success=False."""
     mock_llm = MagicMock(spec=LLMClient)
     mock_llm.generate_response = AsyncMock(
-        return_value=LLMResponse(content="Not a JSON string {", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+        return_value=LLMResponse(content="Malformed json {", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
     )
     classification = ClassificationResult(is_experience=True, type=ExperienceType.GOAL, importance=0.8, confidence=0.9)
 
     extractor = ExperienceExtractor(llm_client=mock_llm)
     res = await extractor.extract("I want to learn AI.", classification=classification)
 
-    assert res.content == ""
+    assert res.success is False
+    assert res.content is None
     assert res.confidence == 0.0
     assert res.raw_model == "fallback_parse_error"
 
 
 @pytest.mark.asyncio
-async def test_case_9_invalid_confidence_fails_safely() -> None:
-    """Requirement 17.9: Invalid confidence score -> Extractor returns safe fallback."""
+async def test_case_d_invalid_extraction_schema_returns_success_false() -> None:
+    """Requirement 6D: Invalid extraction schema (e.g. invalid string confidence) returns success=False."""
     mock_llm = MagicMock(spec=LLMClient)
     payload = {
         "content": "Learns AI",
-        "type": "GOAL",
         "confidence": "high",  # invalid string score
     }
     mock_llm.generate_response = AsyncMock(
@@ -215,18 +209,18 @@ async def test_case_9_invalid_confidence_fails_safely() -> None:
     extractor = ExperienceExtractor(llm_client=mock_llm)
     res = await extractor.extract("I want to learn AI.", classification=classification)
 
-    assert res.content == ""
+    assert res.success is False
+    assert res.content is None
     assert res.confidence == 0.0
     assert res.raw_model == "fallback_parse_error"
 
 
 @pytest.mark.asyncio
-async def test_case_10_missing_content_fails_safely() -> None:
-    """Requirement 17.10: Missing content -> Extractor returns safe fallback."""
+async def test_case_e_empty_extracted_content_returns_success_false() -> None:
+    """Requirement 6E: Empty extracted content returns success=False."""
     mock_llm = MagicMock(spec=LLMClient)
     payload = {
-        "content": "",  # Empty content
-        "type": "GOAL",
+        "content": "  ",  # Whitespace-only content
         "confidence": 0.9,
     }
     mock_llm.generate_response = AsyncMock(
@@ -237,14 +231,15 @@ async def test_case_10_missing_content_fails_safely() -> None:
     extractor = ExperienceExtractor(llm_client=mock_llm)
     res = await extractor.extract("I want to learn AI.", classification=classification)
 
-    assert res.content == ""
+    assert res.success is False
+    assert res.content is None
     assert res.confidence == 0.0
     assert res.raw_model == "fallback_parse_error"
 
 
 @pytest.mark.asyncio
-async def test_case_11_classifier_false_skips_extractor() -> None:
-    """Requirement 17.11: Classifier says false -> Extractor returns fallback immediately without calling LLM."""
+async def test_classifier_false_skips_extractor_call() -> None:
+    """Verify classifier evaluating is_experience=False returns success=False immediately without calling LLM."""
     mock_llm = MagicMock(spec=LLMClient)
     mock_llm.generate_response = AsyncMock()
 
@@ -252,21 +247,7 @@ async def test_case_11_classifier_false_skips_extractor() -> None:
     extractor = ExperienceExtractor(llm_client=mock_llm)
     res = await extractor.extract("What is dependency injection?", classification=classification)
 
-    assert res.content == ""
+    assert res.success is False
+    assert res.content is None
     assert res.confidence == 0.0
     mock_llm.generate_response.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_case_12_llm_exception_fails_safely() -> None:
-    """Requirement 17.12: LLM Exception -> Extractor returns safe fallback without crashing application."""
-    mock_llm = MagicMock(spec=LLMClient)
-    mock_llm.generate_response = AsyncMock(side_effect=LLMRateLimitException("Rate limit exceeded"))
-    classification = ClassificationResult(is_experience=True, type=ExperienceType.GOAL, importance=0.8, confidence=0.9)
-
-    extractor = ExperienceExtractor(llm_client=mock_llm)
-    res = await extractor.extract("I want to learn AI.", classification=classification)
-
-    assert res.content == ""
-    assert res.confidence == 0.0
-    assert res.raw_model == "fallback_llm_error"

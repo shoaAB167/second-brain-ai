@@ -3,17 +3,22 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from personal_ai.application.experience import (
+    AIExperiencePromotionStrategy,
     DeterministicPromotionStrategy,
+    ExperienceExtractor,
     ExperiencePromotionService,
     PromotionResult,
     RecordExperience,
 )
 from personal_ai.db.models import Message, MessageRole
 from personal_ai.domain.experience import (
+    ClassificationResult,
     Experience,
+    ExperienceExtractionResult,
     ExperienceRepository,
     ExperienceSource,
     ExperienceStatus,
+    ExperienceType,
 )
 
 
@@ -81,6 +86,45 @@ async def test_experience_promotion_service_promotes_user_message_with_user_id()
         domain=None,
         extraction_confidence=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_extraction_failure_aborts_promotion_and_creates_no_experience() -> None:
+    """PR #9 Requirements 1, 4 & 6B-G: Extraction failure MUST abort promotion and create NO Experience."""
+    mock_record_exp = MagicMock(spec=RecordExperience)
+    mock_record_exp.execute = AsyncMock()
+
+    mock_extractor = MagicMock(spec=ExperienceExtractor)
+    failed_extraction = ExperienceExtractionResult(
+        success=False,
+        content=None,
+        domain=None,
+        status=None,
+        confidence=0.0,
+        reasoning="Extraction LLM failure",
+        raw_model="fallback_llm_error",
+    )
+    mock_extractor.extract = AsyncMock(return_value=failed_extraction)
+
+    mock_strategy = MagicMock(spec=AIExperiencePromotionStrategy)
+    classification = ClassificationResult(is_experience=True, type=ExperienceType.GOAL, importance=0.9, confidence=0.95)
+    mock_strategy.evaluate_async = AsyncMock(return_value=(True, classification))
+
+    user_msg = Message(id=uuid.uuid4(), role=MessageRole.USER, content="Raw unpromoted text")
+
+    service = ExperiencePromotionService(
+        record_experience=mock_record_exp,
+        strategy=mock_strategy,
+        extractor=mock_extractor,
+    )
+
+    result = await service.promote_message(user_msg)
+
+    # MUST NOT promote
+    assert result.promoted is False
+    assert result.experience_id is None
+    # MUST NOT call RecordExperience.execute (raw message is NOT used as fallback)
+    mock_record_exp.execute.assert_not_called()
 
 
 @pytest.mark.asyncio

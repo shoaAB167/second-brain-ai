@@ -56,9 +56,9 @@ class DeterministicPromotionStrategy(PromotionStrategy):
 class ExperiencePromotionService:
     """Application service for promoting existing user Messages into Experience entities.
 
-    Ensures ONLY user messages are promoted, original text is preserved verbatim or extracted concisely,
-    provenance link (source_message_id) is established, duplicate promotions are blocked,
-    classification records are linked via experience_id, and authenticated user ownership is enforced.
+    Ensures ONLY user messages are promoted, provenance link (source_message_id) is established,
+    duplicate promotions are blocked, classification records are linked via experience_id,
+    and authenticated user ownership is enforced.
     """
 
     def __init__(
@@ -125,6 +125,7 @@ class ExperiencePromotionService:
         else:
             should_promote = self._strategy.evaluate(message, explicit_signal=explicit_signal)
 
+        # If classifier says is_experience=False or promotion policy rejects -> STOP
         if not should_promote:
             return PromotionResult(promoted=False)
 
@@ -140,19 +141,21 @@ class ExperiencePromotionService:
             except Exception as exc:
                 logger.error("Extraction failed safely during message promotion: %s", exc)
 
-        # Determine target content, type, domain, and extraction_confidence to persist
-        target_content = (
-            extraction_res.content
-            if (extraction_res and extraction_res.content and extraction_res.content.strip())
-            else message.content
-        )
-        target_type = (
-            extraction_res.type
-            if (extraction_res and extraction_res.type)
-            else (classification_res.type if classification_res else None)
-        )
-        target_domain = extraction_res.domain if extraction_res else None
-        target_confidence = extraction_res.confidence if extraction_res else None
+        # Requirements 1, 4 & 5: If extractor is enabled, extraction MUST succeed (success == True).
+        # If extraction fails or content is missing -> ABORT PROMOTION (DO NOT create Experience or fallback to raw content).
+        if self._extractor:
+            if not extraction_res or not extraction_res.success or not extraction_res.content:
+                logger.warning(
+                    "Experience promotion aborted because structured extraction failed or returned empty content [message_id=%s]",
+                    message.id,
+                )
+                return PromotionResult(promoted=False)
+
+        # Determine target content, canonical classification type, domain, and extraction_confidence to persist
+        target_content = extraction_res.content if (extraction_res and extraction_res.success and extraction_res.content) else message.content
+        target_type = classification_res.type if classification_res else None
+        target_domain = extraction_res.domain if (extraction_res and extraction_res.success) else None
+        target_confidence = extraction_res.confidence if (extraction_res and extraction_res.success) else None
 
         try:
             experience = await self._record_experience.execute(

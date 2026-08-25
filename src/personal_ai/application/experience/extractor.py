@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from personal_ai.config.settings import get_settings
 from personal_ai.core.logger import get_logger
-from personal_ai.domain.experience import ClassificationResult, ExperienceType
+from personal_ai.domain.experience import ClassificationResult
 from personal_ai.domain.experience.extractor_models import ExperienceExtractionResult
 from personal_ai.llm.client import LLMClient
 from personal_ai.llm.exceptions import LLMException
@@ -47,16 +47,14 @@ class ExperienceExtractor:
             conversation_context: Optional list of recent LLMMessage objects for reference resolution.
 
         Returns:
-            ExperienceExtractionResult: Validated extraction result object.
+            ExperienceExtractionResult: Validated extraction result object with explicit success flag.
         """
-        fallback_type = classification.type if classification and classification.type else ExperienceType.OTHER
-
         if not content or not content.strip() or not classification or not classification.is_experience:
-            return ExperienceExtractionResult.model_construct(
-                content="",
-                type=fallback_type,
+            return ExperienceExtractionResult(
+                success=False,
+                content=None,
                 domain=None,
-                status="active",
+                status=None,
                 confidence=0.0,
                 reasoning="Message content empty or not classified as experience.",
                 raw_model="none",
@@ -107,10 +105,10 @@ class ExperienceExtractor:
 
             data: Dict[str, Any] = json.loads(raw_text)
 
-            # Construct and validate ExperienceExtractionResult
+            # Construct and validate ExperienceExtractionResult with explicit success=True
             result = ExperienceExtractionResult(
+                success=True,
                 content=data.get("content"),
-                type=data.get("type", classification.type),
                 domain=data.get("domain"),
                 status=data.get("status", "active"),
                 confidence=data.get("confidence"),
@@ -121,8 +119,7 @@ class ExperienceExtractor:
             duration_ms = (time.perf_counter() - start_time) * 1000.0
 
             logger.info(
-                "Experience extracted [type=%s, domain=%s, confidence=%.2f, model=%s, duration_ms=%.1f]",
-                result.type,
+                "Experience extracted successfully [domain=%s, confidence=%.2f, model=%s, duration_ms=%.1f]",
                 result.domain,
                 result.confidence,
                 result.raw_model,
@@ -137,11 +134,11 @@ class ExperienceExtractor:
                 duration_ms,
                 exc,
             )
-            return ExperienceExtractionResult.model_construct(
-                content="",
-                type=fallback_type,
+            return ExperienceExtractionResult(
+                success=False,
+                content=None,
                 domain=None,
-                status="active",
+                status=None,
                 confidence=0.0,
                 reasoning=f"Failed extraction validation: {exc}",
                 raw_model="fallback_parse_error",
@@ -154,11 +151,11 @@ class ExperienceExtractor:
                 duration_ms,
                 exc,
             )
-            return ExperienceExtractionResult.model_construct(
-                content="",
-                type=fallback_type,
+            return ExperienceExtractionResult(
+                success=False,
+                content=None,
                 domain=None,
-                status="active",
+                status=None,
                 confidence=0.0,
                 reasoning=f"LLM provider error: {exc}",
                 raw_model="fallback_llm_error",
@@ -171,11 +168,11 @@ class ExperienceExtractor:
                 duration_ms,
                 exc,
             )
-            return ExperienceExtractionResult.model_construct(
-                content="",
-                type=fallback_type,
+            return ExperienceExtractionResult(
+                success=False,
+                content=None,
                 domain=None,
-                status="active",
+                status=None,
                 confidence=0.0,
                 reasoning=f"Unexpected error: {exc}",
                 raw_model="fallback_unexpected_error",

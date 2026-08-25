@@ -1,24 +1,22 @@
 from typing import Any, Optional
-from pydantic import BaseModel, Field, field_validator
-
-from personal_ai.domain.experience.enums import ExperienceType
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ExperienceExtractionResult(BaseModel):
     """Structured result produced by the AI Experience Extractor.
 
     Represents canonical concise personal information extracted from a classified user message.
-    Fails closed on missing/empty content or invalid confidence scores.
+    Explicitly tracks success vs failure. Fails closed on invalid fields or missing content.
     Does NOT directly create or modify Experience records in the database.
     """
 
-    content: str = Field(
+    success: bool = Field(
         ...,
-        description="Canonical concise representation of the user-specific experience.",
+        description="True if structured extraction succeeded, False if extraction failed.",
     )
-    type: ExperienceType = Field(
-        ...,
-        description="Taxonomy category of the extracted experience.",
+    content: Optional[str] = Field(
+        default=None,
+        description="Canonical concise representation of the user-specific experience.",
     )
     domain: Optional[str] = Field(
         default=None,
@@ -43,13 +41,13 @@ class ExperienceExtractionResult(BaseModel):
         description="Identifier of the LLM model that generated the extraction.",
     )
 
-    @field_validator("content", mode="before")
+    @field_validator("success", mode="before")
     @classmethod
-    def validate_content(cls, value: Any) -> str:
-        """Validate content is non-empty string."""
-        if value is None or not str(value).strip():
-            raise ValueError("Extracted experience content cannot be empty or whitespace-only.")
-        return str(value).strip()
+    def validate_strict_bool(cls, value: Any) -> bool:
+        """Validate that success is strictly a JSON boolean (True/False)."""
+        if type(value) is not bool:
+            raise ValueError(f"success MUST be a strict boolean (true/false), got {type(value).__name__}: {value!r}")
+        return value
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -62,18 +60,23 @@ class ExperienceExtractionResult(BaseModel):
             raise ValueError(f"Confidence score '{value}' must be bounded between 0.0 and 1.0 inclusive.")
         return val_float
 
-    @field_validator("type", mode="before")
+    @field_validator("content", mode="before")
     @classmethod
-    def validate_type_enum(cls, value: Any) -> ExperienceType:
-        """Convert string to ExperienceType enum. Fails closed on invalid strings."""
-        if value is None or value == "":
-            raise ValueError("Experience type is required for extraction.")
-        if isinstance(value, ExperienceType):
-            return value
-        val_str = str(value).upper().strip()
-        if val_str == "EMOTION":
-            val_str = "EMOTION_STATE"
-        try:
-            return ExperienceType(val_str)
-        except ValueError:
-            raise ValueError(f"Invalid experience type: '{value}'.")
+    def validate_content_string(cls, value: Any) -> Optional[str]:
+        """Validate content string. Empty or whitespace-only values are normalized to None."""
+        if value is None:
+            return None
+        val_str = str(value).strip()
+        return val_str if val_str else None
+
+    @model_validator(mode="after")
+    def validate_success_consistency(self) -> "ExperienceExtractionResult":
+        """Enforce fail-closed business rules:
+        - When success=True, content MUST be a non-empty string.
+        - When success=False, content MUST be None.
+        """
+        if self.success and not self.content:
+            raise ValueError("When extraction success is True, content MUST be a non-empty string.")
+        if not self.success and self.content is not None:
+            raise ValueError("When extraction success is False, content MUST be None.")
+        return self

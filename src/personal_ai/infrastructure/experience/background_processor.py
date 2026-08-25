@@ -96,14 +96,15 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
                 )
 
                 strategy = self._strategy
+                extractor = self._extractor
                 if not strategy:
                     classifier = ExperienceClassifier(llm_client=self._llm_client)
                     strategy = AIExperiencePromotionStrategy(
                         classifier=classifier,
                         classification_repo=classification_repo,
                     )
-
-                extractor = self._extractor or ExperienceExtractor(llm_client=self._llm_client)
+                    if not extractor:
+                        extractor = ExperienceExtractor(llm_client=self._llm_client)
 
                 service = ExperiencePromotionService(
                     record_experience=record_exp,
