@@ -1,6 +1,7 @@
-from typing import Optional
+from typing import List, Optional
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from personal_ai.application.experience.ai_strategy import (
@@ -15,6 +16,7 @@ from personal_ai.application.experience.promotion import (
     PromotionStrategy,
     RecordExperience,
 )
+from personal_ai.config.settings import get_settings
 from personal_ai.core.logger import get_logger
 from personal_ai.db.models import Message
 from personal_ai.db.repositories.sqlalchemy_experience_classification_repository import (
@@ -24,6 +26,7 @@ from personal_ai.db.repositories.sqlalchemy_experience_repository import (
     SQLAlchemyExperienceRepository,
 )
 from personal_ai.llm.client import LLMClient
+from personal_ai.llm.models import LLMMessage
 
 logger = get_logger(__name__)
 
@@ -54,8 +57,34 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
         user_id: Optional[uuid.UUID] = None,
     ) -> None:
         """Execute background classification and promotion in an isolated DB transaction."""
+        settings = get_settings()
         try:
             async with self._session_factory() as bg_session:
+                # Retrieve bounded prior conversation messages for reference resolution
+                context_messages: List[LLMMessage] = []
+                limit = settings.experience_classifier_context_messages
+                if message.conversation_id and limit > 0:
+                    stmt = (
+                        select(Message)
+                        .where(
+                            Message.conversation_id == message.conversation_id,
+                            Message.id != message.id,
+                            Message.created_at <= message.created_at,
+                        )
+                        .order_by(Message.created_at.desc())
+                        .limit(limit)
+                    )
+                    res = await bg_session.execute(stmt)
+                    prior_msgs = list(res.scalars().all())
+                    prior_msgs.reverse()
+                    context_messages = [
+                        LLMMessage(
+                            role=m.role.value if hasattr(m.role, "value") else str(m.role),
+                            content=m.content,
+                        )
+                        for m in prior_msgs
+                    ]
+
                 exp_repo = SQLAlchemyExperienceRepository(session=bg_session)
                 record_exp = RecordExperience(repository=exp_repo)
                 classification_repo = SQLAlchemyExperienceClassificationRepository(
@@ -76,7 +105,11 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
                     experience_repo=exp_repo,
                 )
 
-                res = await service.promote_message(message=message, user_id=user_id)
+                res = await service.promote_message(
+                    message=message,
+                    user_id=user_id,
+                    context=context_messages,
+                )
                 if res.promoted:
                     logger.info(
                         "Background experience promoted successfully [message_id=%s, experience_id=%s, user_id=%s]",

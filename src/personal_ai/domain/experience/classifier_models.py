@@ -32,6 +32,10 @@ class ClassificationResult(BaseModel):
         le=1.0,
         description="Classifier confidence score between 0.0 (uncertain) and 1.0 (certain).",
     )
+    reasoning: Optional[str] = Field(
+        default=None,
+        description="Optional short explanation of classifier reasoning.",
+    )
     raw_model: Optional[str] = Field(
         default=None,
         description="Identifier of the LLM model that generated the classification.",
@@ -56,8 +60,11 @@ class ClassificationResult(BaseModel):
             return None
         if isinstance(value, ExperienceType):
             return value
+        val_str = str(value).upper().strip()
+        if val_str == "EMOTION":
+            val_str = "EMOTION_STATE"
         try:
-            return ExperienceType(str(value).upper())
+            return ExperienceType(val_str)
         except ValueError:
             raise ValueError(f"Invalid experience type: '{value}'.")
 

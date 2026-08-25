@@ -74,7 +74,7 @@ def create_real_test_user(email: str = "classifieruser@example.com") -> tuple[uu
 
 
 def test_chat_triggers_ai_classifier_and_persists_classification_and_experience() -> None:
-    """Requirements G & H: Verify classification -> Experience linking and user ownership."""
+    """Requirements G & H & 12: Verify classification -> Experience linking, user ownership, and full pipeline."""
     user_id, headers = create_real_test_user("aiclassifier@example.com")
     mock_llm_client = MagicMock(spec=LLMClient)
 
@@ -83,6 +83,7 @@ def test_chat_triggers_ai_classifier_and_persists_classification_and_experience(
         "type": "GOAL",
         "importance": 0.90,
         "confidence": 0.95,
+        "reasoning": "User explicitly states career focus on AI engineering.",
     })
 
     async def mock_generate_response(messages, **kwargs):
@@ -132,19 +133,85 @@ def test_chat_triggers_ai_classifier_and_persists_classification_and_experience(
             assert exp_model.content == user_prompt
             assert exp_model.source == "CHAT"
             assert exp_model.status == "RECEIVED"
-            assert exp_model.user_id == user_id  # Requirement G
+            assert exp_model.user_id == user_id
             assert class_model is not None
             assert class_model.is_experience is True
             assert class_model.type == "GOAL"
             assert class_model.importance == 0.90
             assert class_model.confidence == 0.95
-            assert class_model.experience_id == exp_model.id  # Requirement H
+            assert class_model.experience_id == exp_model.id
 
     asyncio.run(run_promotion_and_verify())
 
 
+def test_general_technical_question_is_not_promoted_to_experience() -> None:
+    """Requirement 12: General technical question -> classifier is_experience=False -> NO Experience created in DB."""
+    user_id, headers = create_real_test_user("techquestion@example.com")
+    mock_llm_client = MagicMock(spec=LLMClient)
+
+    classifier_json = json.dumps({
+        "is_experience": False,
+        "type": None,
+        "importance": 0.10,
+        "confidence": 0.99,
+        "reasoning": "General technical knowledge question.",
+    })
+
+    async def mock_generate_response(messages, **kwargs):
+        is_classifier = any("Personal Experience Classifier" in msg.content for msg in messages)
+        if is_classifier:
+            return LLMResponse(content=classifier_json, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+        return LLMResponse(content="Dependency injection is a software design pattern...", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+
+    mock_llm_client.generate_response = AsyncMock(side_effect=mock_generate_response)
+    app.dependency_overrides[get_llm_client] = lambda: mock_llm_client
+
+    bg_processor = SQLAlchemyBackgroundExperienceProcessor(
+        session_factory=test_session_factory,
+        llm_client=mock_llm_client,
+    )
+    from personal_ai.api.routers.chat import get_background_experience_processor
+    app.dependency_overrides[get_background_experience_processor] = lambda: bg_processor
+
+    user_prompt = "What is dependency injection?"
+    payload = {"message": user_prompt}
+
+    response = client.post("/api/v1/chat", json=payload, headers=headers)
+    assert response.status_code == 200
+
+    async def verify_db() -> None:
+        async with test_session_factory() as session:
+            msg_stmt = select(Message).where(Message.content == user_prompt)
+            msg_res = await session.execute(msg_stmt)
+            user_msg = msg_res.scalar_one_or_none()
+            assert user_msg is not None
+
+            # Execute background promotion processor
+            await bg_processor.process_background_promotion(user_msg, user_id=user_id)
+
+            exp_stmt = select(ExperienceModel).where(ExperienceModel.source_message_id == user_msg.id)
+            exp_res = await session.execute(exp_stmt)
+            exp_model = exp_res.scalar_one_or_none()
+
+            class_stmt = select(ExperienceClassificationModel).where(
+                ExperienceClassificationModel.source_message_id == user_msg.id
+            )
+            class_res = await session.execute(class_stmt)
+            class_model = class_res.scalar_one_or_none()
+
+            # Classification record persisted with is_experience=False
+            assert class_model is not None
+            assert class_model.is_experience is False
+            assert class_model.type is None
+
+            # MUST NOT create an Experience entity in DB
+            assert exp_model is None
+
+    asyncio.run(verify_db())
+
+
 def test_classifier_failure_does_not_break_chat() -> None:
-    """Requirement C: Verify chat request succeeds even if classifier encounters LLM exception."""
+    """Requirement C & 9: Verify chat request succeeds even if classifier encounters LLM exception."""
     _, headers = create_real_test_user("failtest@example.com")
     mock_llm_client = MagicMock(spec=LLMClient)
 

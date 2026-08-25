@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/second_brain_ai"
 
     # Experience Classifier Settings
+    experience_classifier_model: Optional[str] = None
+    experience_classifier_context_messages: int = 6
     experience_classifier_min_confidence: float = 0.70
     experience_classifier_min_importance: float = 0.50
 
