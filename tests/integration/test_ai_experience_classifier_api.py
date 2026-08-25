@@ -73,9 +73,9 @@ def create_real_test_user(email: str = "classifieruser@example.com") -> tuple[uu
     return user.id, {"Authorization": f"Bearer {token}"}
 
 
-def test_chat_triggers_ai_classifier_and_persists_classification_and_experience() -> None:
-    """Requirements G & H & 12: Verify classification -> Experience linking, user ownership, and full pipeline."""
-    user_id, headers = create_real_test_user("aiclassifier@example.com")
+def test_chat_triggers_ai_classifier_and_extractor_and_persists_experience() -> None:
+    """Requirement 18: Verify full pipeline: Message -> Classifier -> Extractor -> Promotion -> Experience in DB."""
+    user_id, headers = create_real_test_user("aipipeline@example.com")
     mock_llm_client = MagicMock(spec=LLMClient)
 
     classifier_json = json.dumps({
@@ -83,13 +83,23 @@ def test_chat_triggers_ai_classifier_and_persists_classification_and_experience(
         "type": "GOAL",
         "importance": 0.90,
         "confidence": 0.95,
-        "reasoning": "User explicitly states career focus on AI engineering.",
+        "reasoning": "User states salary and role career target.",
+    })
+
+    extractor_json = json.dumps({
+        "content": "Reach a 30 LPA backend engineering role",
+        "domain": "career",
+        "status": "active",
+        "confidence": 0.94,
+        "reasoning": "Extracted user goal concisely.",
     })
 
     async def mock_generate_response(messages, **kwargs):
-        is_classifier = any("Personal Experience Classifier" in msg.content for msg in messages)
-        if is_classifier:
+        sys_prompt = messages[0].content if messages else ""
+        if "Personal Experience Classifier" in sys_prompt:
             return LLMResponse(content=classifier_json, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+        elif "Personal Experience Extractor" in sys_prompt:
+            return LLMResponse(content=extractor_json, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
         return LLMResponse(content="That is an exciting goal!", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
 
     mock_llm_client.generate_response = AsyncMock(side_effect=mock_generate_response)
@@ -102,7 +112,7 @@ def test_chat_triggers_ai_classifier_and_persists_classification_and_experience(
     from personal_ai.api.routers.chat import get_background_experience_processor
     app.dependency_overrides[get_background_experience_processor] = lambda: bg_processor
 
-    user_prompt = "I've decided to focus my career on AI engineering."
+    user_prompt = "I want to reach 30 LPA as a backend engineer."
     payload = {"message": user_prompt}
 
     response = client.post("/api/v1/chat", json=payload, headers=headers)
@@ -130,22 +140,23 @@ def test_chat_triggers_ai_classifier_and_persists_classification_and_experience(
             class_model = class_res.scalar_one_or_none()
 
             assert exp_model is not None
-            assert exp_model.content == user_prompt
+            assert exp_model.content == "Reach a 30 LPA backend engineering role"
+            assert exp_model.type == "GOAL"
+            assert exp_model.domain == "career"
+            assert exp_model.extraction_confidence == 0.94
             assert exp_model.source == "CHAT"
             assert exp_model.status == "RECEIVED"
             assert exp_model.user_id == user_id
             assert class_model is not None
             assert class_model.is_experience is True
             assert class_model.type == "GOAL"
-            assert class_model.importance == 0.90
-            assert class_model.confidence == 0.95
             assert class_model.experience_id == exp_model.id
 
     asyncio.run(run_promotion_and_verify())
 
 
 def test_general_technical_question_is_not_promoted_to_experience() -> None:
-    """Requirement 12: General technical question -> classifier is_experience=False -> NO Experience created in DB."""
+    """Requirement 18: General technical question -> classifier is_experience=False -> Extractor NOT called -> NO Experience created in DB."""
     user_id, headers = create_real_test_user("techquestion@example.com")
     mock_llm_client = MagicMock(spec=LLMClient)
 
@@ -158,9 +169,11 @@ def test_general_technical_question_is_not_promoted_to_experience() -> None:
     })
 
     async def mock_generate_response(messages, **kwargs):
-        is_classifier = any("Personal Experience Classifier" in msg.content for msg in messages)
-        if is_classifier:
+        sys_prompt = messages[0].content if messages else ""
+        if "Personal Experience Classifier" in sys_prompt:
             return LLMResponse(content=classifier_json, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+        elif "Personal Experience Extractor" in sys_prompt:
+            pytest.fail("Extractor MUST NOT be called when classifier evaluates is_experience=False")
         return LLMResponse(content="Dependency injection is a software design pattern...", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
 
     mock_llm_client.generate_response = AsyncMock(side_effect=mock_generate_response)

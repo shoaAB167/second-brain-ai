@@ -11,6 +11,7 @@ from personal_ai.application.experience.background_processor import (
     BackgroundExperienceProcessor,
 )
 from personal_ai.application.experience.classifier import ExperienceClassifier
+from personal_ai.application.experience.extractor import ExperienceExtractor
 from personal_ai.application.experience.promotion import (
     ExperiencePromotionService,
     PromotionStrategy,
@@ -39,6 +40,7 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
         session_factory: async_sessionmaker[AsyncSession],
         llm_client: LLMClient,
         strategy: Optional[PromotionStrategy] = None,
+        extractor: Optional[ExperienceExtractor] = None,
     ) -> None:
         """Initialize background experience processor.
 
@@ -46,10 +48,12 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
             session_factory: SQLAlchemy async_sessionmaker for isolated session spawning.
             llm_client: LLMClient for AI classification.
             strategy: Optional PromotionStrategy override for tests or custom policies.
+            extractor: Optional ExperienceExtractor for structured experience extraction.
         """
         self._session_factory = session_factory
         self._llm_client = llm_client
         self._strategy = strategy
+        self._extractor = extractor
 
     async def process_background_promotion(
         self,
@@ -92,17 +96,21 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
                 )
 
                 strategy = self._strategy
+                extractor = self._extractor
                 if not strategy:
                     classifier = ExperienceClassifier(llm_client=self._llm_client)
                     strategy = AIExperiencePromotionStrategy(
                         classifier=classifier,
                         classification_repo=classification_repo,
                     )
+                    if not extractor:
+                        extractor = ExperienceExtractor(llm_client=self._llm_client)
 
                 service = ExperiencePromotionService(
                     record_experience=record_exp,
                     strategy=strategy,
                     experience_repo=exp_repo,
+                    extractor=extractor,
                 )
 
                 res = await service.promote_message(

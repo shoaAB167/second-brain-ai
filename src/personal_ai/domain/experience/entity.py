@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 import uuid
 
-from personal_ai.domain.experience.enums import ExperienceSource, ExperienceStatus
+from personal_ai.domain.experience.enums import ExperienceSource, ExperienceStatus, ExperienceType
 
 
 def utc_now() -> datetime:
@@ -13,10 +13,10 @@ def utc_now() -> datetime:
 
 @dataclass
 class Experience:
-    """Domain entity representing a raw, uninterpreted life experience observation.
+    """Domain entity representing a structured or raw life experience observation.
 
     Pure Python domain entity. Does not depend on FastAPI, SQLAlchemy, or Pydantic.
-    Original content is treated as raw source-of-truth and is never transformed or summarized.
+    Original provenance is preserved via source_message_id and user_id.
     """
 
     content: str
@@ -24,7 +24,10 @@ class Experience:
     user_id: Optional[str] = None
     source_message_id: Optional[uuid.UUID] = None
     id: uuid.UUID = field(default_factory=uuid.uuid4)
+    type: Optional[ExperienceType] = None
+    domain: Optional[str] = None
     status: ExperienceStatus = field(default=ExperienceStatus.RECEIVED)
+    extraction_confidence: Optional[float] = None
     created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
@@ -46,3 +49,12 @@ class Experience:
                 self.status = ExperienceStatus(self.status)
             except ValueError:
                 raise ValueError(f"Invalid experience status: '{self.status}'.")
+
+        if isinstance(self.type, str) and self.type:
+            val_str = self.type.upper().strip()
+            if val_str == "EMOTION":
+                val_str = "EMOTION_STATE"
+            try:
+                self.type = ExperienceType(val_str)
+            except ValueError:
+                raise ValueError(f"Invalid experience type: '{self.type}'.")
