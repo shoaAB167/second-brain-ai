@@ -141,8 +141,14 @@ class ExperiencePromotionService:
             except Exception as exc:
                 logger.error("Extraction failed safely during message promotion: %s", exc)
 
-        # Requirements 1, 4 & 5: If extractor is enabled, extraction MUST succeed (success == True).
-        # If extraction fails or content is missing -> ABORT PROMOTION (DO NOT create Experience or fallback to raw content).
+        # Architectural Invariant Enforcement:
+        # IF extraction is enabled:
+        #   1. extraction_res MUST exist
+        #   2. extraction_res.success MUST be True
+        #   3. extraction_res.content MUST be a valid non-empty string
+        #   If ANY condition fails -> ABORT promotion (NO Experience created, NO raw message fallback)
+        # IF extraction is intentionally disabled:
+        #   Use message.content as fallback for legacy/unextracted flows.
         if self._extractor:
             if not extraction_res or not extraction_res.success or not extraction_res.content:
                 logger.warning(
@@ -151,11 +157,15 @@ class ExperiencePromotionService:
                 )
                 return PromotionResult(promoted=False)
 
-        # Determine target content, canonical classification type, domain, and extraction_confidence to persist
-        target_content = extraction_res.content if (extraction_res and extraction_res.success and extraction_res.content) else message.content
+            target_content = extraction_res.content
+            target_domain = extraction_res.domain
+            target_confidence = extraction_res.confidence
+        else:
+            target_content = message.content
+            target_domain = None
+            target_confidence = None
+
         target_type = classification_res.type if classification_res else None
-        target_domain = extraction_res.domain if (extraction_res and extraction_res.success) else None
-        target_confidence = extraction_res.confidence if (extraction_res and extraction_res.success) else None
 
         try:
             experience = await self._record_experience.execute(
