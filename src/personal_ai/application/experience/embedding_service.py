@@ -46,6 +46,7 @@ class ExperienceEmbeddingService:
         """Generate vector embedding for a structured Experience entity.
 
         Enforces idempotency: skips regeneration if already embedded with current provider model.
+        Enforces dimension invariant: fails if provider returns vector dimension different from provider.dimensions.
         Fails safely on provider exceptions without raising unhandled errors.
 
         Args:
@@ -87,6 +88,20 @@ class ExperienceEmbeddingService:
         try:
             vector = await self._provider.embed(canonical_text)
             duration_ms = (time.perf_counter() - start_time) * 1000.0
+
+            # Requirement 2: Strict Vector Dimension Invariant Enforcement
+            if len(vector) != self._provider.dimensions:
+                logger.error(
+                    "Embedding dimension mismatch [expected=%d, got=%d, experience_id=%s]",
+                    self._provider.dimensions,
+                    len(vector),
+                    experience.id,
+                )
+                return EmbeddingResult(
+                    success=False,
+                    status="FAILED",
+                    error="Embedding dimension mismatch",
+                )
 
             logger.info(
                 "Vector embedding generated successfully [experience_id=%s, model=%s, dim=%d, duration_ms=%.1f]",

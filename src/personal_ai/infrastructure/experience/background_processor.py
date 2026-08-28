@@ -27,6 +27,7 @@ from personal_ai.db.repositories.sqlalchemy_experience_classification_repository
 from personal_ai.db.repositories.sqlalchemy_experience_repository import (
     SQLAlchemyExperienceRepository,
 )
+from personal_ai.domain.experience.entity import Experience
 from personal_ai.infrastructure.embedding import EmbeddingProvider, OpenAIEmbeddingProvider
 from personal_ai.llm.client import LLMClient
 from personal_ai.llm.models import LLMMessage
@@ -65,11 +66,13 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
         message: Message,
         user_id: Optional[uuid.UUID] = None,
     ) -> None:
-        """Execute background classification, promotion, and vector embedding in an isolated DB transaction."""
+        """Execute background classification, promotion, and vector embedding in separated DB transactions."""
         settings = get_settings()
+        promoted_experience: Optional[Experience] = None
+
+        # TRANSACTION 1: Classification, extraction, and initial Experience persistence
         try:
             async with self._session_factory() as bg_session:
-                # Retrieve bounded prior conversation messages for reference resolution
                 context_messages: List[LLMMessage] = []
                 limit = settings.experience_classifier_context_messages
                 if message.conversation_id and limit > 0:
@@ -124,45 +127,13 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
                     context=context_messages,
                 )
                 if res.promoted and res.experience:
+                    promoted_experience = res.experience
                     logger.info(
                         "Background experience promoted successfully [message_id=%s, experience_id=%s, user_id=%s]",
                         message.id,
                         res.experience_id,
                         user_id,
                     )
-
-                    # PR #10: Asynchronous Experience Embedding Generation
-                    if settings.embedding_enabled:
-                        try:
-                            provider = self._embedding_provider or OpenAIEmbeddingProvider()
-                            embedding_service = ExperienceEmbeddingService(provider=provider)
-                            embed_res = await embedding_service.embed_experience(res.experience)
-
-                            res.experience.embedding = embed_res.embedding
-                            res.experience.embedding_model = embed_res.embedding_model
-                            res.experience.embedding_status = embed_res.status
-                            res.experience.embedded_at = embed_res.embedded_at
-
-                            await exp_repo.update(res.experience)
-
-                            if embed_res.success:
-                                logger.info(
-                                    "Experience vector embedding completed [experience_id=%s, model=%s]",
-                                    res.experience.id,
-                                    embed_res.embedding_model,
-                                )
-                            else:
-                                logger.warning(
-                                    "Experience vector embedding failed safely [experience_id=%s]: %s",
-                                    res.experience.id,
-                                    embed_res.error,
-                                )
-                        except Exception as embed_exc:
-                            logger.error(
-                                "Unexpected error during background experience embedding [experience_id=%s]: %s",
-                                res.experience.id,
-                                embed_exc,
-                            )
         except Exception as exc:
             logger.error(
                 "Background experience promotion failed safely [message_id=%s, user_id=%s]: %s",
@@ -170,3 +141,44 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
                 user_id,
                 exc,
             )
+            return
+
+        # Transaction 1 closed!
+
+        # EXTERNAL EMBEDDING API CALL (Outside DB transaction):
+        if promoted_experience and settings.embedding_enabled:
+            provider = self._embedding_provider or OpenAIEmbeddingProvider()
+            embedding_service = ExperienceEmbeddingService(provider=provider)
+            embed_res = await embedding_service.embed_experience(promoted_experience)
+
+            # TRANSACTION 2: Update Experience embedding & status in fresh DB transaction
+            try:
+                async with self._session_factory() as update_session:
+                    update_repo = SQLAlchemyExperienceRepository(session=update_session)
+                    existing_exp = await update_repo.get_by_id(promoted_experience.id)
+                    if existing_exp:
+                        existing_exp.embedding = embed_res.embedding if embed_res.success else None
+                        existing_exp.embedding_model = embed_res.embedding_model if embed_res.success else None
+                        existing_exp.embedding_status = embed_res.status
+                        existing_exp.embedded_at = embed_res.embedded_at
+
+                        await update_repo.update(existing_exp)
+
+                        if embed_res.success:
+                            logger.info(
+                                "Experience vector embedding completed [experience_id=%s, model=%s]",
+                                existing_exp.id,
+                                embed_res.embedding_model,
+                            )
+                        else:
+                            logger.warning(
+                                "Experience vector embedding failed safely [experience_id=%s]: %s",
+                                existing_exp.id,
+                                embed_res.error,
+                            )
+            except Exception as update_exc:
+                logger.error(
+                    "Unexpected error persisting vector embedding update [experience_id=%s]: %s",
+                    promoted_experience.id,
+                    update_exc,
+                )

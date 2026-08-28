@@ -17,21 +17,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    conn = op.get_bind()
-    has_vector = False
-    try:
-        res = conn.execute(sa.text("SELECT 1 FROM pg_available_extensions WHERE name = 'vector'"))
-        if res.scalar() == 1:
-            conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
-            has_vector = True
-    except Exception:
-        has_vector = False
-
-    if has_vector:
-        op.add_column("experiences", sa.Column("embedding", Vector(1536), nullable=True))
-    else:
-        op.add_column("experiences", sa.Column("embedding", sa.JSON(), nullable=True))
-
+    # Require pgvector extension in PostgreSQL
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+    op.add_column("experiences", sa.Column("embedding", Vector(1536), nullable=True))
     op.add_column("experiences", sa.Column("embedding_model", sa.String(length=100), nullable=True))
     op.add_column("experiences", sa.Column("embedding_status", sa.String(length=20), server_default="PENDING", nullable=False))
     op.add_column("experiences", sa.Column("embedded_at", sa.DateTime(timezone=True), nullable=True))

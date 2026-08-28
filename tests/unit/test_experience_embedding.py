@@ -68,6 +68,30 @@ async def test_4_vector_dimension_validation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dimension_mismatch_returns_failed_result() -> None:
+    """Requirement 2: Dimension mismatch returns success=False and status=FAILED without persisting vector."""
+    provider = MagicMock(spec=MockEmbeddingProvider)
+    provider.model_name = "text-embedding-3-small"
+    provider.dimensions = 1536
+    # Mock embed returning vector of incorrect size 512
+    provider.embed = AsyncMock(return_value=[0.1] * 512)
+
+    service = ExperienceEmbeddingService(provider=provider)
+    exp = Experience(
+        content="Testing dimension mismatch",
+        type=ExperienceType.GOAL,
+        source=ExperienceSource.CHAT,
+    )
+
+    res = await service.embed_experience(exp)
+
+    assert res.success is False
+    assert res.status == "FAILED"
+    assert res.error == "Embedding dimension mismatch"
+    assert res.embedding is None
+
+
+@pytest.mark.asyncio
 async def test_5_embedding_model_stored_correctly() -> None:
     """Requirement 17.5: Embedding model identifier stored in result."""
     provider = MockEmbeddingProvider(model="text-embedding-3-small")
@@ -163,7 +187,6 @@ async def test_11_unpersisted_empty_experience_returns_failed_result() -> None:
 def test_12_configuration_loaded_correctly() -> None:
     """Requirement 17.12: Settings contains valid default embedding settings."""
     settings = get_settings()
-    assert settings.embedding_provider == "openai"
     assert settings.embedding_model == "text-embedding-3-small"
     assert settings.embedding_dimensions == 1536
     assert settings.embedding_enabled is True

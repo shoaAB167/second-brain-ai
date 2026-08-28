@@ -54,7 +54,6 @@ class Settings(BaseSettings):
     experience_extractor_model: Optional[str] = None
 
     # Experience Embedding Settings
-    embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
     embedding_enabled: bool = True
