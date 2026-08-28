@@ -53,6 +53,10 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             type=exp_type_val,
             domain=experience.domain,
             extraction_confidence=experience.extraction_confidence,
+            embedding=experience.embedding,
+            embedding_model=experience.embedding_model,
+            embedding_status=experience.embedding_status or "PENDING",
+            embedded_at=experience.embedded_at,
             source=experience.source.value if hasattr(experience.source, "value") else str(experience.source),
             status=experience.status.value if hasattr(experience.status, "value") else str(experience.status),
             created_at=experience.created_at,
@@ -72,6 +76,37 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
                         return existing
                     await asyncio.sleep(0.05)
             raise
+
+    async def update(self, experience: Experience) -> Experience:
+        """Update an existing Experience entity in the database.
+
+        Args:
+            experience: Domain Experience entity to update.
+
+        Returns:
+            Experience: Updated domain Experience entity.
+        """
+        stmt = select(ExperienceModel).where(ExperienceModel.id == experience.id)
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+
+        if not model:
+            raise ValueError(f"Cannot update non-existent Experience with ID {experience.id}")
+
+        model.content = experience.content
+        model.type = (
+            experience.type.value if hasattr(experience.type, "value") else str(experience.type)
+        ) if experience.type else None
+        model.domain = experience.domain
+        model.extraction_confidence = experience.extraction_confidence
+        model.embedding = experience.embedding
+        model.embedding_model = experience.embedding_model
+        model.embedding_status = experience.embedding_status or "PENDING"
+        model.embedded_at = experience.embedded_at
+        model.status = experience.status.value if hasattr(experience.status, "value") else str(experience.status)
+
+        await self._session.commit()
+        return self._model_to_domain(model)
 
     async def get_by_id(self, experience_id: uuid.UUID) -> Optional[Experience]:
         """Retrieve an Experience entity by UUID.
@@ -132,6 +167,10 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             type=exp_type,
             domain=model.domain,
             extraction_confidence=model.extraction_confidence,
+            embedding=[float(x) for x in model.embedding] if model.embedding is not None else None,
+            embedding_model=model.embedding_model,
+            embedding_status=model.embedding_status or "PENDING",
+            embedded_at=model.embedded_at,
             source=ExperienceSource(model.source),
             status=ExperienceStatus(model.status),
             created_at=model.created_at,

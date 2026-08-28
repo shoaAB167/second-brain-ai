@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 import uuid
 
 from personal_ai.domain.experience.enums import ExperienceSource, ExperienceStatus, ExperienceType
@@ -28,6 +28,10 @@ class Experience:
     domain: Optional[str] = None
     status: ExperienceStatus = field(default=ExperienceStatus.RECEIVED)
     extraction_confidence: Optional[float] = None
+    embedding: Optional[List[float]] = None
+    embedding_model: Optional[str] = None
+    embedding_status: str = "PENDING"  # PENDING, COMPLETED, FAILED
+    embedded_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
