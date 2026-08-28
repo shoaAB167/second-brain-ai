@@ -190,3 +190,11 @@ def test_12_configuration_loaded_correctly() -> None:
     assert settings.embedding_model == "text-embedding-3-small"
     assert settings.embedding_dimensions == 1536
     assert settings.embedding_enabled is True
+
+
+def test_incompatible_embedding_dimensions_raises_configuration_error() -> None:
+    """Requirement 3: Settings validation fails fast if embedding_dimensions != 1536 (db schema invariant)."""
+    with pytest.raises(ValueError) as exc_info:
+        Settings(embedding_dimensions=768)
+
+    assert "must match the database schema vector dimension (1536)" in str(exc_info.value)

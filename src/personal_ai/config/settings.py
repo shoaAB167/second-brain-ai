@@ -5,6 +5,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_JWT_SECRET = "dev-secret-key-change-in-production-must-be-secure"
+DEFAULT_EMBEDDING_DIMENSIONS = 1536
 
 
 class Settings(BaseSettings):
@@ -55,7 +56,7 @@ class Settings(BaseSettings):
 
     # Experience Embedding Settings
     embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
+    embedding_dimensions: int = DEFAULT_EMBEDDING_DIMENSIONS
     embedding_enabled: bool = True
 
     log_level: str = "INFO"
@@ -75,6 +76,16 @@ class Settings(BaseSettings):
                     "Production environment requires a secure jwt_secret_key (minimum 32 characters) "
                     "configured via environment variable JWT_SECRET_KEY."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_embedding_dimensions(self) -> "Settings":
+        """Validate that configured embedding_dimensions matches the database schema vector dimension (1536)."""
+        if self.embedding_enabled and self.embedding_dimensions != DEFAULT_EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Configured embedding_dimensions ({self.embedding_dimensions}) must match "
+                f"the database schema vector dimension ({DEFAULT_EMBEDDING_DIMENSIONS})."
+            )
         return self
 
 
