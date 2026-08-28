@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from personal_ai.core.auth import create_access_token
 from personal_ai.db.models import Base, ExperienceClassificationModel, ExperienceModel, Message, User
 from personal_ai.db.session import get_db_session
+from personal_ai.infrastructure.embedding import MockEmbeddingProvider
 from personal_ai.infrastructure.experience import SQLAlchemyBackgroundExperienceProcessor
 from personal_ai.llm import LLMClient, get_llm_client
 from personal_ai.llm.exceptions import LLMConnectionException
@@ -43,7 +44,8 @@ def setup_ai_classifier_db(monkeypatch: pytest.MonkeyPatch) -> None:
     from personal_ai.api.routers.chat import get_background_experience_processor
     app.dependency_overrides[get_background_experience_processor] = lambda: SQLAlchemyBackgroundExperienceProcessor(
         session_factory=test_session_factory,
-        llm_client=app.dependency_overrides.get(get_llm_client, lambda: MagicMock())()
+        llm_client=app.dependency_overrides.get(get_llm_client, lambda: MagicMock())(),
+        embedding_provider=MockEmbeddingProvider(),
     )
 
     yield
@@ -73,8 +75,8 @@ def create_real_test_user(email: str = "classifieruser@example.com") -> tuple[uu
     return user.id, {"Authorization": f"Bearer {token}"}
 
 
-def test_chat_triggers_ai_classifier_and_extractor_and_persists_experience() -> None:
-    """Requirement 18: Verify full pipeline: Message -> Classifier -> Extractor -> Promotion -> Experience in DB."""
+def test_chat_triggers_ai_classifier_and_extractor_and_persists_experience_and_embedding() -> None:
+    """Requirement 18 & PR #10: Verify full pipeline: Message -> Classifier -> Extractor -> Promotion -> Experience DB -> Background Embedding."""
     user_id, headers = create_real_test_user("aipipeline@example.com")
     mock_llm_client = MagicMock(spec=LLMClient)
 
@@ -108,6 +110,7 @@ def test_chat_triggers_ai_classifier_and_extractor_and_persists_experience() -> 
     bg_processor = SQLAlchemyBackgroundExperienceProcessor(
         session_factory=test_session_factory,
         llm_client=mock_llm_client,
+        embedding_provider=MockEmbeddingProvider(),
     )
     from personal_ai.api.routers.chat import get_background_experience_processor
     app.dependency_overrides[get_background_experience_processor] = lambda: bg_processor
@@ -152,6 +155,12 @@ def test_chat_triggers_ai_classifier_and_extractor_and_persists_experience() -> 
             assert class_model.type == "GOAL"
             assert class_model.experience_id == exp_model.id
 
+            # PR #10: Verify embedding fields persisted in ExperienceModel
+            assert exp_model.embedding_status == "COMPLETED"
+            assert exp_model.embedding_model == "text-embedding-3-small"
+            assert exp_model.embedding is not None
+            assert len(exp_model.embedding) == 1536
+
     asyncio.run(run_promotion_and_verify())
 
 
@@ -182,6 +191,7 @@ def test_general_technical_question_is_not_promoted_to_experience() -> None:
     bg_processor = SQLAlchemyBackgroundExperienceProcessor(
         session_factory=test_session_factory,
         llm_client=mock_llm_client,
+        embedding_provider=MockEmbeddingProvider(),
     )
     from personal_ai.api.routers.chat import get_background_experience_processor
     app.dependency_overrides[get_background_experience_processor] = lambda: bg_processor
@@ -241,6 +251,7 @@ def test_classifier_failure_does_not_break_chat() -> None:
     app.dependency_overrides[get_background_experience_processor] = lambda: SQLAlchemyBackgroundExperienceProcessor(
         session_factory=test_session_factory,
         llm_client=mock_llm_client,
+        embedding_provider=MockEmbeddingProvider(),
     )
 
     payload = {"message": "I feel tired today."}

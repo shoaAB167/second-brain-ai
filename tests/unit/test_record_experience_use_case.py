@@ -22,6 +22,14 @@ class MockExperienceRepository(ExperienceRepository):
         self.created_experiences.append(experience)
         return experience
 
+    async def update(self, experience: Experience) -> Experience:
+        for i, exp in enumerate(self.created_experiences):
+            if exp.id == experience.id:
+                self.created_experiences[i] = experience
+                return experience
+        self.created_experiences.append(experience)
+        return experience
+
     async def get_by_id(self, experience_id: uuid.UUID) -> Optional[Experience]:
         for exp in self.created_experiences:
             if exp.id == experience_id:

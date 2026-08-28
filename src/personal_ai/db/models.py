@@ -3,7 +3,8 @@ from enum import Enum
 from typing import Optional
 import uuid
 
-from sqlalchemy import Index, String, Text, DateTime, ForeignKey, Enum as SQLEnum, UUID
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Index, JSON, String, Text, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -141,6 +142,19 @@ class ExperienceModel(Base):
     type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
     domain: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     extraction_confidence: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+    # Embedding & Vector Storage Fields (PR #10)
+    embedding: Mapped[Optional[list[float]]] = mapped_column(
+        Vector(1536).with_variant(JSON, "sqlite"), nullable=True
+    )
+    embedding_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    embedding_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="PENDING", index=True
+    )
+    embedded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     source: Mapped[str] = mapped_column(
         SQLEnum(
             "CHAT", "FILE", "EMAIL", "CALENDAR", "GITHUB", "VOICE", "API", "MANUAL", "TOOL",

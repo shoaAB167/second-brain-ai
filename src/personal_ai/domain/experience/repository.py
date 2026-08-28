@@ -24,6 +24,18 @@ class ExperienceRepository(ABC):
         pass
 
     @abstractmethod
+    async def update(self, experience: Experience) -> Experience:
+        """Update an existing Experience domain entity.
+
+        Args:
+            experience: The Experience domain entity to update.
+
+        Returns:
+            Experience: The updated domain entity.
+        """
+        pass
+
+    @abstractmethod
     async def get_by_id(self, experience_id: uuid.UUID) -> Optional[Experience]:
         """Retrieve an Experience domain entity by ID.
 

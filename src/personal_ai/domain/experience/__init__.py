@@ -1,3 +1,4 @@
+from personal_ai.domain.experience.canonical_text import build_experience_embedding_text
 from personal_ai.domain.experience.classifier_models import ClassificationResult
 from personal_ai.domain.experience.entity import Experience
 from personal_ai.domain.experience.enums import (
@@ -16,4 +17,5 @@ __all__ = [
     "ExperienceRepository",
     "ClassificationResult",
     "ExperienceExtractionResult",
+    "build_experience_embedding_text",
 ]

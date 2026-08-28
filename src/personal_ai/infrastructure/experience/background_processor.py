@@ -11,6 +11,7 @@ from personal_ai.application.experience.background_processor import (
     BackgroundExperienceProcessor,
 )
 from personal_ai.application.experience.classifier import ExperienceClassifier
+from personal_ai.application.experience.embedding_service import ExperienceEmbeddingService
 from personal_ai.application.experience.extractor import ExperienceExtractor
 from personal_ai.application.experience.promotion import (
     ExperiencePromotionService,
@@ -26,6 +27,7 @@ from personal_ai.db.repositories.sqlalchemy_experience_classification_repository
 from personal_ai.db.repositories.sqlalchemy_experience_repository import (
     SQLAlchemyExperienceRepository,
 )
+from personal_ai.infrastructure.embedding import EmbeddingProvider, OpenAIEmbeddingProvider
 from personal_ai.llm.client import LLMClient
 from personal_ai.llm.models import LLMMessage
 
@@ -41,6 +43,7 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
         llm_client: LLMClient,
         strategy: Optional[PromotionStrategy] = None,
         extractor: Optional[ExperienceExtractor] = None,
+        embedding_provider: Optional[EmbeddingProvider] = None,
     ) -> None:
         """Initialize background experience processor.
 
@@ -49,18 +52,20 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
             llm_client: LLMClient for AI classification.
             strategy: Optional PromotionStrategy override for tests or custom policies.
             extractor: Optional ExperienceExtractor for structured experience extraction.
+            embedding_provider: Optional EmbeddingProvider override for tests or custom models.
         """
         self._session_factory = session_factory
         self._llm_client = llm_client
         self._strategy = strategy
         self._extractor = extractor
+        self._embedding_provider = embedding_provider
 
     async def process_background_promotion(
         self,
         message: Message,
         user_id: Optional[uuid.UUID] = None,
     ) -> None:
-        """Execute background classification and promotion in an isolated DB transaction."""
+        """Execute background classification, promotion, and vector embedding in an isolated DB transaction."""
         settings = get_settings()
         try:
             async with self._session_factory() as bg_session:
@@ -118,13 +123,46 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
                     user_id=user_id,
                     context=context_messages,
                 )
-                if res.promoted:
+                if res.promoted and res.experience:
                     logger.info(
                         "Background experience promoted successfully [message_id=%s, experience_id=%s, user_id=%s]",
                         message.id,
                         res.experience_id,
                         user_id,
                     )
+
+                    # PR #10: Asynchronous Experience Embedding Generation
+                    if settings.embedding_enabled:
+                        try:
+                            provider = self._embedding_provider or OpenAIEmbeddingProvider()
+                            embedding_service = ExperienceEmbeddingService(provider=provider)
+                            embed_res = await embedding_service.embed_experience(res.experience)
+
+                            res.experience.embedding = embed_res.embedding
+                            res.experience.embedding_model = embed_res.embedding_model
+                            res.experience.embedding_status = embed_res.status
+                            res.experience.embedded_at = embed_res.embedded_at
+
+                            await exp_repo.update(res.experience)
+
+                            if embed_res.success:
+                                logger.info(
+                                    "Experience vector embedding completed [experience_id=%s, model=%s]",
+                                    res.experience.id,
+                                    embed_res.embedding_model,
+                                )
+                            else:
+                                logger.warning(
+                                    "Experience vector embedding failed safely [experience_id=%s]: %s",
+                                    res.experience.id,
+                                    embed_res.error,
+                                )
+                        except Exception as embed_exc:
+                            logger.error(
+                                "Unexpected error during background experience embedding [experience_id=%s]: %s",
+                                res.experience.id,
+                                embed_exc,
+                            )
         except Exception as exc:
             logger.error(
                 "Background experience promotion failed safely [message_id=%s, user_id=%s]: %s",
