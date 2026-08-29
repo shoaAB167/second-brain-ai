@@ -106,10 +106,9 @@ class GoogleEmbeddingProvider(EmbeddingProvider):
                 data = response.json()
                 vector = data.get("embedding", {}).get("values", [])
                 if len(vector) != self._dimensions:
-                    logger.warning(
-                        "Returned Google vector dimension mismatch [expected=%d, got=%d]",
-                        self._dimensions,
-                        len(vector),
+                    raise LLMException(
+                        f"Google embedding dimension mismatch: "
+                        f"expected {self._dimensions}, got {len(vector)}"
                     )
                 return [float(x) for x in vector]
 
@@ -182,10 +181,9 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
                 data = response.json()
                 vector = data["data"][0]["embedding"]
                 if len(vector) != self._dimensions:
-                    logger.warning(
-                        "Returned vector dimension mismatch [expected=%d, got=%d]",
-                        self._dimensions,
-                        len(vector),
+                    raise LLMException(
+                        f"OpenAI embedding dimension mismatch: "
+                        f"expected {self._dimensions}, got {len(vector)}"
                     )
                 return [float(x) for x in vector]
 

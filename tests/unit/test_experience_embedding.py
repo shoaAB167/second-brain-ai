@@ -199,6 +199,24 @@ async def test_google_embedding_provider_auth_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_google_embedding_provider_dimension_mismatch_fails_closed() -> None:
+    """Test GoogleEmbeddingProvider fails closed and raises LLMException when returned dimension != expected."""
+    provider = GoogleEmbeddingProvider(api_key="test-key", model="gemini-embedding-001", dimensions=1536)
+    short_vec = [0.05] * 768
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"embedding": {"values": short_vec}}
+
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)):
+        with pytest.raises(LLMException) as exc_info:
+            await provider.embed("Sample text for dimension mismatch check")
+
+        assert "Google embedding dimension mismatch" in str(exc_info.value)
+        assert "expected 1536, got 768" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_google_embedding_provider_missing_key_fails() -> None:
     """Test GoogleEmbeddingProvider raises LLMAuthenticationException when no key is configured."""
     provider = GoogleEmbeddingProvider(api_key=None, model="gemini-embedding-001")
