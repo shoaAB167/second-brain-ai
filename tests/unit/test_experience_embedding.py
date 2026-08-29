@@ -273,3 +273,16 @@ def test_incompatible_embedding_dimensions_raises_configuration_error() -> None:
         Settings(embedding_dimensions=768)
 
     assert "must match the database schema vector dimension (1536)" in str(exc_info.value)
+
+
+def test_experience_model_embedding_column_uses_pgvector() -> None:
+    """Test 1: ExperienceModel.embedding column is configured with pgvector Vector(1536)."""
+    from pgvector.sqlalchemy import Vector
+    from personal_ai.db.models import ExperienceModel
+
+    embedding_col = ExperienceModel.__table__.c.embedding
+    # Column type should be Vector with dimension 1536
+    assert isinstance(embedding_col.type, Vector)
+    assert embedding_col.type.dim == 1536
+    assert embedding_col.nullable is True
+
