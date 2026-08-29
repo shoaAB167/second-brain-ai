@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional, Tuple
 import uuid
 import pytest
 
@@ -41,6 +41,15 @@ class MockExperienceRepository(ExperienceRepository):
             if exp.source_message_id == source_message_id:
                 return exp
         return None
+
+    async def search_by_vector(
+        self,
+        user_id: uuid.UUID,
+        query_vector: List[float],
+        limit: int = 5,
+        threshold: Optional[float] = None,
+    ) -> List[Tuple[Experience, float]]:
+        return []
 
 
 @pytest.mark.asyncio

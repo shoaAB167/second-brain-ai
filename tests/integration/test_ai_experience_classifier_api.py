@@ -99,10 +99,10 @@ def test_chat_triggers_ai_classifier_and_extractor_and_persists_experience_and_e
     async def mock_generate_response(messages, **kwargs):
         sys_prompt = messages[0].content if messages else ""
         if "Personal Experience Classifier" in sys_prompt:
-            return LLMResponse(content=classifier_json, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+            return LLMResponse(content=classifier_json, provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
         elif "Personal Experience Extractor" in sys_prompt:
-            return LLMResponse(content=extractor_json, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
-        return LLMResponse(content="That is an exciting goal!", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+            return LLMResponse(content=extractor_json, provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
+        return LLMResponse(content="That is an exciting goal!", provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
 
     mock_llm_client.generate_response = AsyncMock(side_effect=mock_generate_response)
     app.dependency_overrides[get_llm_client] = lambda: mock_llm_client
@@ -157,7 +157,7 @@ def test_chat_triggers_ai_classifier_and_extractor_and_persists_experience_and_e
 
             # PR #10: Verify embedding fields persisted in ExperienceModel
             assert exp_model.embedding_status == "COMPLETED"
-            assert exp_model.embedding_model == "text-embedding-3-small"
+            assert exp_model.embedding_model == "gemini-embedding-001"
             assert exp_model.embedding is not None
             assert len(exp_model.embedding) == 1536
 
@@ -180,10 +180,10 @@ def test_general_technical_question_is_not_promoted_to_experience() -> None:
     async def mock_generate_response(messages, **kwargs):
         sys_prompt = messages[0].content if messages else ""
         if "Personal Experience Classifier" in sys_prompt:
-            return LLMResponse(content=classifier_json, provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+            return LLMResponse(content=classifier_json, provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
         elif "Personal Experience Extractor" in sys_prompt:
             pytest.fail("Extractor MUST NOT be called when classifier evaluates is_experience=False")
-        return LLMResponse(content="Dependency injection is a software design pattern...", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+        return LLMResponse(content="Dependency injection is a software design pattern...", provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
 
     mock_llm_client.generate_response = AsyncMock(side_effect=mock_generate_response)
     app.dependency_overrides[get_llm_client] = lambda: mock_llm_client
@@ -242,7 +242,7 @@ def test_classifier_failure_does_not_break_chat() -> None:
         is_classifier = any("Personal Experience Classifier" in msg.content for msg in messages)
         if is_classifier:
             raise LLMConnectionException("Connection timeout during classification")
-        return LLMResponse(content="Normal chat response", provider="openai", model="gpt-4o-mini", latency_ms=10.0)
+        return LLMResponse(content="Normal chat response", provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
 
     mock_llm_client.generate_response = AsyncMock(side_effect=mock_generate_response)
     app.dependency_overrides[get_llm_client] = lambda: mock_llm_client
