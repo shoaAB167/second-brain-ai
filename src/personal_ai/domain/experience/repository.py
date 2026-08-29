@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import List, Optional, Tuple
 import uuid
 
 from personal_ai.domain.experience.entity import Experience
@@ -8,7 +8,7 @@ from personal_ai.domain.experience.entity import Experience
 class ExperienceRepository(ABC):
     """Abstract interface for experience persistence repositories.
 
-    Enforces provider-independent contract for saving and retrieving raw Experience entities.
+    Enforces provider-independent contract for saving, updating, and retrieving Experience entities.
     """
 
     @abstractmethod
@@ -56,5 +56,28 @@ class ExperienceRepository(ABC):
 
         Returns:
             Optional[Experience]: Found domain entity or None.
+        """
+        pass
+
+    @abstractmethod
+    async def search_by_vector(
+        self,
+        user_id: uuid.UUID,
+        query_vector: List[float],
+        limit: int = 5,
+        threshold: Optional[float] = None,
+    ) -> List[Tuple[Experience, float]]:
+        """Search experiences for a specific user ordered by semantic similarity to query_vector.
+
+        Strictly user-scoped at the database layer. Ignores experiences without valid completed embeddings.
+
+        Args:
+            user_id: Target user UUID (strict user scoping).
+            query_vector: Embedding vector of the search query.
+            limit: Maximum number of results to return (default: 5).
+            threshold: Optional minimum cosine similarity score threshold (in [-1.0, 1.0]).
+
+        Returns:
+            List[Tuple[Experience, float]]: List of (Experience, similarity_score) tuples ordered by descending similarity.
         """
         pass

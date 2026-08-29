@@ -1,5 +1,6 @@
 import asyncio
-from typing import Optional, Union
+import math
+from typing import List, Optional, Tuple, Union
 import uuid
 
 from sqlalchemy import select
@@ -148,6 +149,95 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             return None
 
         return self._model_to_domain(model)
+
+    async def search_by_vector(
+        self,
+        user_id: uuid.UUID,
+        query_vector: List[float],
+        limit: int = 5,
+        threshold: Optional[float] = None,
+    ) -> List[Tuple[Experience, float]]:
+        """Search experiences for a specific user ordered by semantic cosine similarity to query_vector.
+
+        Enforces strict user isolation at the database level.
+        In PostgreSQL: uses pgvector cosine distance operator (<=>).
+        In SQLite (test environment): evaluates cosine distance for user experiences.
+
+        Args:
+            user_id: Target user UUID.
+            query_vector: Embedding vector for semantic comparison.
+            limit: Maximum number of ranked results to return.
+            threshold: Optional minimum cosine similarity threshold in [-1.0, 1.0].
+
+        Returns:
+            List[Tuple[Experience, float]]: List of (Experience, similarity_score) tuples ordered by descending similarity.
+        """
+        user_uuid = uuid.UUID(str(user_id)) if isinstance(user_id, str) else user_id
+
+        # Determine dialect from connection
+        bind = self._session.bind
+        dialect_name = bind.dialect.name if bind else "postgresql"
+
+        if dialect_name == "sqlite":
+            # SQLite test environment fallback
+            stmt = select(ExperienceModel).where(
+                ExperienceModel.user_id == user_uuid,
+                ExperienceModel.embedding.is_not(None),
+                ExperienceModel.embedding_status == "COMPLETED",
+            )
+            res = await self._session.execute(stmt)
+            models = list(res.scalars().all())
+
+            scored: List[Tuple[ExperienceModel, float, float]] = []
+            for m in models:
+                if not m.embedding:
+                    continue
+                vec = [float(x) for x in m.embedding]
+                dot = sum(a * b for a, b in zip(vec, query_vector))
+                norm_a = math.sqrt(sum(a * a for a in vec)) or 1.0
+                norm_b = math.sqrt(sum(b * b for b in query_vector)) or 1.0
+                sim = dot / (norm_a * norm_b)
+                dist = 1.0 - sim
+                scored.append((m, dist, sim))
+
+            # Order by distance ascending (most similar first)
+            scored.sort(key=lambda item: item[1])
+
+            results: List[Tuple[Experience, float]] = []
+            for m, dist, sim in scored:
+                if threshold is not None and sim < threshold:
+                    continue
+                results.append((self._model_to_domain(m), float(sim)))
+                if len(results) >= limit:
+                    break
+            return results
+
+        else:
+            # PostgreSQL pgvector similarity query
+            distance_expr = ExperienceModel.embedding.cosine_distance(query_vector).label("distance")
+            stmt = (
+                select(ExperienceModel, distance_expr)
+                .where(
+                    ExperienceModel.user_id == user_uuid,
+                    ExperienceModel.embedding.is_not(None),
+                    ExperienceModel.embedding_status == "COMPLETED",
+                )
+                .order_by(distance_expr.asc())
+                .limit(limit)
+            )
+
+            res = await self._session.execute(stmt)
+            rows = res.all()
+
+            results = []
+            for row in rows:
+                m = row[0]
+                dist = float(row[1]) if row[1] is not None else 1.0
+                sim = 1.0 - dist
+                if threshold is not None and sim < threshold:
+                    continue
+                results.append((self._model_to_domain(m), float(sim)))
+            return results
 
     @staticmethod
     def _model_to_domain(model: ExperienceModel) -> Experience:
