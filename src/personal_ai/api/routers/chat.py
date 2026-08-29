@@ -3,8 +3,12 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from personal_ai.api.dependencies import get_current_user_id, get_db_session, get_llm_client
-from personal_ai.api.routers.memories import get_memory_retrieval_service
+from personal_ai.api.dependencies import (
+    get_current_user_id,
+    get_db_session,
+    get_llm_client,
+    get_memory_retrieval_service,
+)
 from personal_ai.application.experience import BackgroundExperienceProcessor
 from personal_ai.application.memory import MemoryRetrievalService
 from personal_ai.db.repositories import (

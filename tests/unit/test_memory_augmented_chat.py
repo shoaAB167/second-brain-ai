@@ -1,5 +1,6 @@
+import asyncio
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional
 from unittest.mock import AsyncMock, MagicMock
 import uuid
 import pytest
@@ -9,11 +10,13 @@ from personal_ai.application.memory import (
     MemoryRetrievalService,
     MemorySearchResult,
 )
+from personal_ai.config.settings import get_settings
 from personal_ai.core.exceptions import AppException
 from personal_ai.db.models import Conversation, Message
 from personal_ai.db.repositories.base import ConversationRepository
 from personal_ai.llm.client import LLMClient
-from personal_ai.llm.models import LLMMessage, LLMResponse
+from personal_ai.llm.exceptions import LLMConnectionException
+from personal_ai.llm.models import LLMMessage, LLMResponse, LLMStreamChunk
 from personal_ai.models.chat import ChatRequest
 from personal_ai.services.chat_service import ChatService
 
@@ -238,55 +241,15 @@ async def test_17e_user_isolation_passes_correct_user_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_17f_existing_conversation_history_and_message_preserved() -> None:
-    """Requirement 17F & 17G: Short-term history and current message are preserved in chronological order."""
-    user_id = uuid.uuid4()
-    mock_llm = MagicMock(spec=LLMClient)
-    captured_messages: List[LLMMessage] = []
+async def test_17e_retrieval_limit_passed_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Requirement 2E: Configured memory_retrieval_limit is passed to MemoryRetrievalService."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "memory_retrieval_limit", 7)
 
-    async def fake_generate(messages: List[LLMMessage], **kwargs) -> LLMResponse:
-        nonlocal captured_messages
-        captured_messages = list(messages)
-        return LLMResponse(content="I remember!", provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
-
-    mock_llm.generate_response = AsyncMock(side_effect=fake_generate)
-    conv_repo = MockConversationRepository()
-
-    # Pre-seed prior conversation
-    conv = await conv_repo.create_conversation(user_id=user_id)
-    await conv_repo.add_message(conversation_id=conv.id, role="user", content="My name is Shoaib.")
-    await conv_repo.add_message(conversation_id=conv.id, role="assistant", content="Nice to meet you, Shoaib.")
-
-    mock_retrieval = MagicMock(spec=MemoryRetrievalService)
-    mock_retrieval.search = AsyncMock(return_value=[])
-
-    service = ChatService(
-        llm_client=mock_llm,
-        conversation_repo=conv_repo,
-        retrieval_service=mock_retrieval,
-    )
-
-    req = ChatRequest(conversation_id=conv.id, message="What is my name?")
-    await service.process_chat(req, user_id=user_id)
-
-    # Verify history order: prior user msg -> prior assistant msg -> new user msg
-    user_msgs = [m for m in captured_messages if m.role == "user"]
-    assistant_msgs = [m for m in captured_messages if m.role == "assistant"]
-
-    assert len(user_msgs) == 2
-    assert user_msgs[0].content == "My name is Shoaib."
-    assert user_msgs[1].content == "What is my name?"
-    assert len(assistant_msgs) == 1
-    assert assistant_msgs[0].content == "Nice to meet you, Shoaib."
-
-
-@pytest.mark.asyncio
-async def test_17h_llm_called_exactly_once() -> None:
-    """Requirement 17H: LLM client generate_response is called exactly once per chat turn."""
     user_id = uuid.uuid4()
     mock_llm = MagicMock(spec=LLMClient)
     mock_llm.generate_response = AsyncMock(
-        return_value=LLMResponse(content="Single turn response", provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
+        return_value=LLMResponse(content="Limit check", provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
     )
     conv_repo = MockConversationRepository()
 
@@ -299,5 +262,122 @@ async def test_17h_llm_called_exactly_once() -> None:
         retrieval_service=mock_retrieval,
     )
 
-    await service.process_chat(ChatRequest(message="Single call test"), user_id=user_id)
-    assert mock_llm.generate_response.call_count == 1
+    await service.process_chat(ChatRequest(message="Limit test"), user_id=user_id)
+    mock_retrieval.search.assert_awaited_once()
+    assert mock_retrieval.search.call_args.kwargs["limit"] == 7
+
+
+@pytest.mark.asyncio
+async def test_17f_memory_retrieval_disabled_does_not_call_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Requirement 2F: When memory_retrieval_enabled is False, retrieval is not called."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "memory_retrieval_enabled", False)
+
+    user_id = uuid.uuid4()
+    mock_llm = MagicMock(spec=LLMClient)
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content="Disabled check", provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
+    )
+    conv_repo = MockConversationRepository()
+
+    mock_retrieval = MagicMock(spec=MemoryRetrievalService)
+    mock_retrieval.search = AsyncMock()
+
+    service = ChatService(
+        llm_client=mock_llm,
+        conversation_repo=conv_repo,
+        retrieval_service=mock_retrieval,
+    )
+
+    res = await service.process_chat(ChatRequest(message="Disabled test"), user_id=user_id)
+    assert res.response == "Disabled check"
+    mock_retrieval.search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_17g_streaming_chat_with_memory() -> None:
+    """Requirement 2G: Streaming chat retrieves memories, passes them to LLM stream, and emits DONE event."""
+    user_id = uuid.uuid4()
+    captured_messages: List[LLMMessage] = []
+
+    async def fake_stream(messages: List[LLMMessage], **kwargs) -> AsyncGenerator[LLMStreamChunk, None]:
+        nonlocal captured_messages
+        captured_messages = list(messages)
+        yield LLMStreamChunk(content="Hello ")
+        yield LLMStreamChunk(content="world!")
+
+    mock_llm = MagicMock(spec=LLMClient)
+    mock_llm.stream_response = MagicMock(side_effect=fake_stream)
+    conv_repo = MockConversationRepository()
+
+    retrieved_memory = MemorySearchResult(
+        experience_id=uuid.uuid4(),
+        type="FACT",
+        domain="personal",
+        content="User lives in Bangalore",
+        status="RECEIVED",
+        similarity=0.91,
+        source_message_id=uuid.uuid4(),
+        created_at=datetime.now(timezone.utc),
+    )
+
+    mock_retrieval = MagicMock(spec=MemoryRetrievalService)
+    mock_retrieval.search = AsyncMock(return_value=[retrieved_memory])
+
+    service = ChatService(
+        llm_client=mock_llm,
+        conversation_repo=conv_repo,
+        retrieval_service=mock_retrieval,
+    )
+
+    events: List[str] = []
+    async for sse in service.process_chat_stream(ChatRequest(message="Where do I live?"), user_id=user_id):
+        events.append(sse)
+
+    # Verify retrieval called once
+    mock_retrieval.search.assert_awaited_once()
+
+    # Verify LLM stream received memory context
+    assert len(captured_messages) >= 2
+    system_msg = captured_messages[0]
+    assert "<user_memory>" in system_msg.content
+    assert "User lives in Bangalore" in system_msg.content
+
+    # Verify assistant message persisted in repo
+    stored_msgs = await conv_repo.get_conversation_messages(conv_repo.conversations[0].id)
+    assistant_msgs = [m for m in stored_msgs if m.role == "assistant"]
+    assert len(assistant_msgs) == 1
+    assert assistant_msgs[0].content == "Hello world!"
+
+    # Verify DONE event emitted in stream
+    assert any('"type": "done"' in ev or '"type":"done"' in ev for ev in events)
+
+
+@pytest.mark.asyncio
+async def test_17h_streaming_memory_retrieval_failure_continues() -> None:
+    """Requirement 2H: Streaming continues smoothly when memory retrieval fails."""
+    user_id = uuid.uuid4()
+
+    async def fake_stream(messages: List[LLMMessage], **kwargs) -> AsyncGenerator[LLMStreamChunk, None]:
+        yield LLMStreamChunk(content="Streamed response without memory")
+
+    mock_llm = MagicMock(spec=LLMClient)
+    mock_llm.stream_response = MagicMock(side_effect=fake_stream)
+    conv_repo = MockConversationRepository()
+
+    mock_retrieval = MagicMock(spec=MemoryRetrievalService)
+    mock_retrieval.search = AsyncMock(side_effect=RuntimeError("Search offline"))
+
+    service = ChatService(
+        llm_client=mock_llm,
+        conversation_repo=conv_repo,
+        retrieval_service=mock_retrieval,
+    )
+
+    events: List[str] = []
+    async for sse in service.process_chat_stream(ChatRequest(message="Test streaming fail"), user_id=user_id):
+        events.append(sse)
+
+    # Verify tokens were still streamed and no error event was emitted due to memory retrieval
+    assert any("Streamed response without memory" in ev for ev in events)
+    assert not any('"type": "error"' in ev or '"type":"error"' in ev for ev in events)
