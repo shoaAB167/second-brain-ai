@@ -159,14 +159,14 @@ class ChatService:
                 user_id,
             )
 
-        # 2. Retrieve previous conversation messages in chronological order
-        stored_messages = await self._conversation_repo.get_conversation_messages(conv_id)
-
-        # 3. Retrieve relevant long-term memories (fail-safe enhancement)
+        # 2. Retrieve relevant long-term memories (fail-safe enhancement)
         memory_context = await self._retrieve_memory_context(
             user_id=user_id,
             query=request.message,
         )
+
+        # 3. Retrieve previous conversation messages in chronological order
+        stored_messages = await self._conversation_repo.get_conversation_messages(conv_id)
 
         # 4. Construct complete LLM messages structure
         history = self._build_llm_messages(
@@ -243,14 +243,14 @@ class ChatService:
                 user_id,
             )
 
-        # 2. Retrieve previous conversation messages in chronological order
-        stored_messages = await self._conversation_repo.get_conversation_messages(conv_id)
-
-        # 3. Retrieve relevant long-term memories (fail-safe enhancement)
+        # 2. Retrieve relevant long-term memories (fail-safe enhancement)
         memory_context = await self._retrieve_memory_context(
             user_id=user_id,
             query=request.message,
         )
+
+        # 3. Retrieve previous conversation messages in chronological order
+        stored_messages = await self._conversation_repo.get_conversation_messages(conv_id)
 
         # 4. Construct complete LLM messages structure
         history = self._build_llm_messages(
