@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 60
 
     # LLM Settings
-    llm_provider: str = "openai"
-    llm_model: str = "gpt-4o-mini"
+    llm_provider: str = "gemini"
+    llm_model: str = "gemini-3.5-flash"
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
@@ -55,7 +55,8 @@ class Settings(BaseSettings):
     experience_extractor_model: Optional[str] = None
 
     # Experience Embedding Settings
-    embedding_model: str = "text-embedding-3-small"
+    embedding_provider: str = "google"
+    embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = DEFAULT_EMBEDDING_DIMENSIONS
     embedding_enabled: bool = True
 

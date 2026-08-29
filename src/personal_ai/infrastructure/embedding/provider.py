@@ -42,6 +42,81 @@ class EmbeddingProvider(ABC):
         pass
 
 
+class GoogleEmbeddingProvider(EmbeddingProvider):
+    """Infrastructure implementation of EmbeddingProvider using Google Gemini Embeddings API."""
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        dimensions: Optional[int] = None,
+    ) -> None:
+        """Initialize Google embedding provider.
+
+        Args:
+            api_key: Optional Google API key override.
+            model: Optional Google embedding model identifier.
+            dimensions: Optional target vector dimensions (supports 1536 via MRL outputDimensionality).
+        """
+        settings = get_settings()
+        self._api_key = api_key or settings.google_api_key or settings.gemini_api_key
+        self._model = model or settings.embedding_model
+        self._dimensions = dimensions or settings.embedding_dimensions
+
+    @property
+    def provider_name(self) -> str:
+        return "google"
+
+    @property
+    def model_name(self) -> str:
+        return self._model
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    async def embed(self, text: str) -> List[float]:
+        """Generate vector embedding via Google Generative Language REST API."""
+        if not self._api_key:
+            raise LLMAuthenticationException("Google API key is not configured for vector embeddings.")
+
+        if not text or not text.strip():
+            raise ValueError("Embedding input text cannot be empty.")
+
+        clean_model = self._model.replace("models/", "")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:embedContent?key={self._api_key}"
+        payload = {
+            "model": f"models/{clean_model}",
+            "content": {
+                "parts": [{"text": text.strip()}]
+            },
+            "outputDimensionality": self._dimensions,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(url, json=payload)
+                if response.status_code in (401, 403):
+                    raise LLMAuthenticationException("Invalid Google API Key.")
+                elif response.status_code == 429:
+                    raise LLMRateLimitException("Google API rate limit exceeded during embedding generation.")
+                elif response.status_code != 200:
+                    raise LLMException(f"Google Embedding API returned status code {response.status_code}: {response.text}")
+
+                data = response.json()
+                vector = data.get("embedding", {}).get("values", [])
+                if len(vector) != self._dimensions:
+                    logger.warning(
+                        "Returned Google vector dimension mismatch [expected=%d, got=%d]",
+                        self._dimensions,
+                        len(vector),
+                    )
+                return [float(x) for x in vector]
+
+        except httpx.RequestError as exc:
+            raise LLMConnectionException(f"Network error connecting to Google Embedding API: {exc}")
+
+
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     """Infrastructure implementation of EmbeddingProvider using OpenAI's Embeddings API."""
 
@@ -123,7 +198,7 @@ class MockEmbeddingProvider(EmbeddingProvider):
 
     def __init__(
         self,
-        model: str = "text-embedding-3-small",
+        model: str = "gemini-embedding-001",
         dimensions: int = 1536,
         should_fail: bool = False,
     ) -> None:
@@ -155,3 +230,36 @@ class MockEmbeddingProvider(EmbeddingProvider):
         raw_vector = [(math.sin(seed + i)) for i in range(self._dimensions)]
         norm = math.sqrt(sum(x * x for x in raw_vector)) or 1.0
         return [x / norm for x in raw_vector]
+
+
+def get_embedding_provider(
+    provider_name: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    dimensions: Optional[int] = None,
+) -> EmbeddingProvider:
+    """Factory creating configured EmbeddingProvider instance based on application settings.
+
+    Args:
+        provider_name: Optional provider override ('google', 'openai', 'mock').
+        api_key: Optional API key override.
+        model: Optional embedding model override.
+        dimensions: Optional vector dimensions override.
+
+    Returns:
+        EmbeddingProvider: Resolved concrete provider instance.
+
+    Raises:
+        ValueError: If configured provider is not supported.
+    """
+    settings = get_settings()
+    provider = (provider_name or settings.embedding_provider).lower()
+
+    if provider in ("google", "gemini"):
+        return GoogleEmbeddingProvider(api_key=api_key, model=model, dimensions=dimensions)
+    elif provider == "openai":
+        return OpenAIEmbeddingProvider(api_key=api_key, model=model, dimensions=dimensions)
+    elif provider == "mock":
+        return MockEmbeddingProvider(model=model or settings.embedding_model, dimensions=dimensions or settings.embedding_dimensions)
+    else:
+        raise ValueError(f"Unsupported embedding provider '{provider}'. Supported providers: 'google', 'openai', 'mock'.")

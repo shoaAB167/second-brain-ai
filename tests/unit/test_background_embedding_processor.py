@@ -47,10 +47,10 @@ def create_mock_llm_client() -> MagicMock:
     async def mock_generate(messages, **kwargs):
         sys_prompt = messages[0].content if messages else ""
         if "Personal Experience Classifier" in sys_prompt:
-            return LLMResponse(content=classifier_json, provider="openai", model="gpt-4o-mini", latency_ms=5.0)
+            return LLMResponse(content=classifier_json, provider="gemini", model="gemini-3.5-flash", latency_ms=5.0)
         elif "Personal Experience Extractor" in sys_prompt:
-            return LLMResponse(content=extractor_json, provider="openai", model="gpt-4o-mini", latency_ms=5.0)
-        return LLMResponse(content="Response", provider="openai", model="gpt-4o-mini", latency_ms=5.0)
+            return LLMResponse(content=extractor_json, provider="gemini", model="gemini-3.5-flash", latency_ms=5.0)
+        return LLMResponse(content="Response", provider="gemini", model="gemini-3.5-flash", latency_ms=5.0)
 
     mock_llm.generate_response = AsyncMock(side_effect=mock_generate)
     return mock_llm
@@ -86,7 +86,7 @@ async def test_5a_background_embedding_succeeds() -> None:
         assert exp is not None
         assert exp.content == "Reach 30 LPA backend engineer"
         assert exp.embedding_status == "COMPLETED"
-        assert exp.embedding_model == "text-embedding-3-small"
+        assert exp.embedding_model == "gemini-embedding-001"
         assert exp.embedding is not None
         assert len(exp.embedding) == 1536
         assert exp.embedded_at is not None
@@ -133,7 +133,7 @@ async def test_5c_background_embedding_dimension_mismatch_fails_safely() -> None
     mock_llm = create_mock_llm_client()
 
     mock_provider = MagicMock(spec=MockEmbeddingProvider)
-    mock_provider.model_name = "text-embedding-3-small"
+    mock_provider.model_name = "gemini-embedding-001"
     mock_provider.dimensions = 1536
     # Provider returns wrong vector length 512
     mock_provider.embed = AsyncMock(return_value=[0.1] * 512)

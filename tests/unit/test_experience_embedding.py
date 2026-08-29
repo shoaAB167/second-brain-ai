@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
+import httpx
 import pytest
 
 from personal_ai.application.experience import EmbeddingResult, ExperienceEmbeddingService
@@ -12,8 +13,16 @@ from personal_ai.domain.experience import (
     ExperienceType,
     build_experience_embedding_text,
 )
-from personal_ai.infrastructure.embedding import MockEmbeddingProvider
-from personal_ai.llm.exceptions import LLMConnectionException
+from personal_ai.infrastructure.embedding import (
+    GoogleEmbeddingProvider,
+    MockEmbeddingProvider,
+    get_embedding_provider,
+)
+from personal_ai.llm.exceptions import (
+    LLMAuthenticationException,
+    LLMConnectionException,
+    LLMException,
+)
 
 
 def test_1_build_experience_embedding_text_canonical_formatting() -> None:
@@ -71,7 +80,7 @@ async def test_4_vector_dimension_validation() -> None:
 async def test_dimension_mismatch_returns_failed_result() -> None:
     """Requirement 2: Dimension mismatch returns success=False and status=FAILED without persisting vector."""
     provider = MagicMock(spec=MockEmbeddingProvider)
-    provider.model_name = "text-embedding-3-small"
+    provider.model_name = "gemini-embedding-001"
     provider.dimensions = 1536
     # Mock embed returning vector of incorrect size 512
     provider.embed = AsyncMock(return_value=[0.1] * 512)
@@ -94,7 +103,7 @@ async def test_dimension_mismatch_returns_failed_result() -> None:
 @pytest.mark.asyncio
 async def test_5_embedding_model_stored_correctly() -> None:
     """Requirement 17.5: Embedding model identifier stored in result."""
-    provider = MockEmbeddingProvider(model="text-embedding-3-small")
+    provider = MockEmbeddingProvider(model="gemini-embedding-001")
     service = ExperienceEmbeddingService(provider=provider)
     exp = Experience(
         content="Building Second Brain AI",
@@ -105,7 +114,7 @@ async def test_5_embedding_model_stored_correctly() -> None:
     res = await service.embed_experience(exp)
 
     assert res.success is True
-    assert res.embedding_model == "text-embedding-3-small"
+    assert res.embedding_model == "gemini-embedding-001"
     assert res.status == "COMPLETED"
     assert res.embedded_at is not None
 
@@ -114,7 +123,7 @@ async def test_5_embedding_model_stored_correctly() -> None:
 async def test_6_idempotency_existing_completed_embedding_skipped() -> None:
     """Requirement 17.6: Idempotency - Existing completed embedding for same model is NOT regenerated."""
     provider = MagicMock(spec=MockEmbeddingProvider)
-    provider.model_name = "text-embedding-3-small"
+    provider.model_name = "gemini-embedding-001"
     provider.dimensions = 1536
     provider.embed = AsyncMock()
 
@@ -124,7 +133,7 @@ async def test_6_idempotency_existing_completed_embedding_skipped() -> None:
         type=ExperienceType.GOAL,
         source=ExperienceSource.CHAT,
         embedding=existing_vector,
-        embedding_model="text-embedding-3-small",
+        embedding_model="gemini-embedding-001",
         embedding_status="COMPLETED",
         embedded_at=datetime.now(timezone.utc),
     )
@@ -160,6 +169,53 @@ async def test_7_failed_embedding_does_not_delete_experience() -> None:
 
 
 @pytest.mark.asyncio
+async def test_google_embedding_provider_success_mocked() -> None:
+    """Test GoogleEmbeddingProvider sends correct payload and parses response."""
+    provider = GoogleEmbeddingProvider(api_key="fake-google-key", model="gemini-embedding-001", dimensions=1536)
+    expected_vec = [0.05] * 1536
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"embedding": {"values": expected_vec}}
+
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)):
+        vector = await provider.embed("Sample text for Google embedding")
+        assert len(vector) == 1536
+        assert vector == expected_vec
+
+
+@pytest.mark.asyncio
+async def test_google_embedding_provider_auth_failure() -> None:
+    """Test GoogleEmbeddingProvider raises LLMAuthenticationException on HTTP 401/403."""
+    provider = GoogleEmbeddingProvider(api_key="invalid-key", model="gemini-embedding-001")
+
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.text = "Permission denied"
+
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_response)):
+        with pytest.raises(LLMAuthenticationException):
+            await provider.embed("Sample text")
+
+
+@pytest.mark.asyncio
+async def test_google_embedding_provider_missing_key_fails() -> None:
+    """Test GoogleEmbeddingProvider raises LLMAuthenticationException when no key is configured."""
+    provider = GoogleEmbeddingProvider(api_key=None, model="gemini-embedding-001")
+    provider._api_key = None
+    with pytest.raises(LLMAuthenticationException):
+        await provider.embed("Sample text")
+
+
+def test_factory_resolves_google_embedding_provider() -> None:
+    """Test get_embedding_provider factory resolves GoogleEmbeddingProvider when configured."""
+    provider = get_embedding_provider(provider_name="google", api_key="test-key")
+    assert isinstance(provider, GoogleEmbeddingProvider)
+    assert provider.provider_name == "google"
+    assert provider.dimensions == 1536
+
+
+@pytest.mark.asyncio
 async def test_10_user_isolation_preserved() -> None:
     """Requirement 17.10: Experience and vectors remain associated with distinct user_ids."""
     user1_id = str(uuid.uuid4())
@@ -185,9 +241,10 @@ async def test_11_unpersisted_empty_experience_returns_failed_result() -> None:
 
 
 def test_12_configuration_loaded_correctly() -> None:
-    """Requirement 17.12: Settings contains valid default embedding settings."""
+    """Requirement 17.12: Settings contains valid default Google embedding settings."""
     settings = get_settings()
-    assert settings.embedding_model == "text-embedding-3-small"
+    assert settings.embedding_provider == "google"
+    assert settings.embedding_model == "gemini-embedding-001"
     assert settings.embedding_dimensions == 1536
     assert settings.embedding_enabled is True
 

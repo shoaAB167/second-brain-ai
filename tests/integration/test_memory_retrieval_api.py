@@ -88,7 +88,7 @@ def test_authenticated_memory_search_returns_ranked_results() -> None:
                 source="CHAT",
                 status="RECEIVED",
                 embedding=vec_career,
-                embedding_model="text-embedding-3-small",
+                embedding_model="gemini-embedding-001",
                 embedding_status="COMPLETED",
             )
             exp2 = ExperienceModel(
@@ -100,7 +100,7 @@ def test_authenticated_memory_search_returns_ranked_results() -> None:
                 source="CHAT",
                 status="RECEIVED",
                 embedding=vec_music,
-                embedding_model="text-embedding-3-small",
+                embedding_model="gemini-embedding-001",
                 embedding_status="COMPLETED",
             )
             session.add_all([exp1, exp2])
@@ -144,7 +144,7 @@ def test_user_isolation_strictly_enforced_in_api() -> None:
                 source="CHAT",
                 status="RECEIVED",
                 embedding=vec_target,
-                embedding_model="text-embedding-3-small",
+                embedding_model="gemini-embedding-001",
                 embedding_status="COMPLETED",
             )
             exp_b = ExperienceModel(
@@ -155,7 +155,7 @@ def test_user_isolation_strictly_enforced_in_api() -> None:
                 source="CHAT",
                 status="RECEIVED",
                 embedding=vec_target,
-                embedding_model="text-embedding-3-small",
+                embedding_model="gemini-embedding-001",
                 embedding_status="COMPLETED",
             )
             session.add_all([exp_a, exp_b])

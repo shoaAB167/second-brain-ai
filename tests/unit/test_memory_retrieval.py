@@ -107,7 +107,7 @@ async def test_a_basic_semantic_retrieval() -> None:
         status=ExperienceStatus.RECEIVED,
         source=ExperienceSource.CHAT,
         embedding=career_vec,
-        embedding_model="text-embedding-3-small",
+        embedding_model="gemini-embedding-001",
         embedding_status="COMPLETED",
         embedded_at=datetime.now(timezone.utc),
     )
@@ -142,6 +142,7 @@ async def test_b_ranking_most_relevant_ranks_first() -> None:
         domain="career",
         source=ExperienceSource.CHAT,
         embedding=career_vec,
+        embedding_model="gemini-embedding-001",
         embedding_status="COMPLETED",
     )
     exp_fitness = Experience(
@@ -152,6 +153,7 @@ async def test_b_ranking_most_relevant_ranks_first() -> None:
         domain="fitness",
         source=ExperienceSource.CHAT,
         embedding=fitness_vec,
+        embedding_model="gemini-embedding-001",
         embedding_status="COMPLETED",
     )
     exp_food = Experience(
@@ -162,6 +164,7 @@ async def test_b_ranking_most_relevant_ranks_first() -> None:
         domain="food",
         source=ExperienceSource.CHAT,
         embedding=food_vec,
+        embedding_model="gemini-embedding-001",
         embedding_status="COMPLETED",
     )
 
@@ -195,6 +198,7 @@ async def test_c_user_isolation_strictly_enforced() -> None:
         type=ExperienceType.GOAL,
         source=ExperienceSource.CHAT,
         embedding=vec,
+        embedding_model="gemini-embedding-001",
         embedding_status="COMPLETED",
     )
     exp_b = Experience(
@@ -204,6 +208,7 @@ async def test_c_user_isolation_strictly_enforced() -> None:
         type=ExperienceType.GOAL,
         source=ExperienceSource.CHAT,
         embedding=vec,
+        embedding_model="gemini-embedding-001",
         embedding_status="COMPLETED",
     )
     await repo.create(exp_a)
@@ -297,6 +302,7 @@ async def test_g_limit_enforced() -> None:
                 type=ExperienceType.FACT,
                 source=ExperienceSource.CHAT,
                 embedding=vec,
+                embedding_model="gemini-embedding-001",
                 embedding_status="COMPLETED",
             )
         )
@@ -424,7 +430,7 @@ async def test_k_dimension_mismatch_raises_app_exception() -> None:
     """Requirement 18K: Provider returning incorrect vector dimension raises clean 500 AppException."""
     user_id = uuid.uuid4()
     provider = MagicMock(spec=MockEmbeddingProvider)
-    provider.model_name = "text-embedding-3-small"
+    provider.model_name = "gemini-embedding-001"
     provider.dimensions = 1536
     # Provider returns wrong vector length 512
     provider.embed = AsyncMock(return_value=[0.1] * 512)

@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from personal_ai.api.dependencies import get_current_user_id, get_db_session
 from personal_ai.application.memory import MemoryRetrievalService
 from personal_ai.db.repositories import SQLAlchemyExperienceRepository
-from personal_ai.infrastructure.embedding import EmbeddingProvider, OpenAIEmbeddingProvider
+from personal_ai.infrastructure.embedding import (
+    EmbeddingProvider,
+    get_embedding_provider as create_embedding_provider,
+)
 from personal_ai.models.memory import (
     MemorySearchResponse,
     MemorySearchResultItem,
@@ -17,8 +20,8 @@ router = APIRouter()
 
 
 def get_embedding_provider() -> EmbeddingProvider:
-    """Dependency provider constructing default OpenAIEmbeddingProvider."""
-    return OpenAIEmbeddingProvider()
+    """Dependency provider constructing configured EmbeddingProvider via factory."""
+    return create_embedding_provider()
 
 
 def get_memory_retrieval_service(

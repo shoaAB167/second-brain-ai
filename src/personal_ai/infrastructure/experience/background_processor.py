@@ -28,7 +28,7 @@ from personal_ai.db.repositories.sqlalchemy_experience_repository import (
     SQLAlchemyExperienceRepository,
 )
 from personal_ai.domain.experience.entity import Experience
-from personal_ai.infrastructure.embedding import EmbeddingProvider, OpenAIEmbeddingProvider
+from personal_ai.infrastructure.embedding import EmbeddingProvider, get_embedding_provider
 from personal_ai.llm.client import LLMClient
 from personal_ai.llm.models import LLMMessage
 
@@ -147,7 +147,7 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
 
         # EXTERNAL EMBEDDING API CALL (Outside DB transaction):
         if promoted_experience and settings.embedding_enabled:
-            provider = self._embedding_provider or OpenAIEmbeddingProvider()
+            provider = self._embedding_provider or get_embedding_provider()
             embedding_service = ExperienceEmbeddingService(provider=provider)
             embed_res = await embedding_service.embed_experience(promoted_experience)
 
