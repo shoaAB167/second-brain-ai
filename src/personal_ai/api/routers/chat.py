@@ -4,18 +4,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from personal_ai.api.dependencies import get_current_user_id, get_db_session, get_llm_client
-from personal_ai.application.experience import (
-    AIExperiencePromotionStrategy,
-    BackgroundExperienceProcessor,
-    ExperienceClassifier,
-    ExperiencePromotionService,
-    RecordExperience,
-)
+from personal_ai.api.routers.memories import get_memory_retrieval_service
+from personal_ai.application.experience import BackgroundExperienceProcessor
+from personal_ai.application.memory import MemoryRetrievalService
 from personal_ai.db.repositories import (
     ConversationRepository,
     SQLAlchemyConversationRepository,
-    SQLAlchemyExperienceClassificationRepository,
-    SQLAlchemyExperienceRepository,
 )
 from personal_ai.db.session import AsyncSessionFactory
 from personal_ai.infrastructure.experience import SQLAlchemyBackgroundExperienceProcessor
@@ -47,12 +41,14 @@ def get_chat_service(
     llm_client: LLMClient = Depends(get_llm_client),
     conversation_repo: ConversationRepository = Depends(get_conversation_repository),
     bg_processor: BackgroundExperienceProcessor = Depends(get_background_experience_processor),
+    retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
 ) -> ChatService:
-    """Dependency provider for ChatService, injecting repository, LLM, and background processor abstractions."""
+    """Dependency provider for ChatService, injecting repository, LLM, background processor, and retrieval service."""
     return ChatService(
         llm_client=llm_client,
         conversation_repo=conversation_repo,
         bg_processor=bg_processor,
+        retrieval_service=retrieval_service,
     )
 
 
