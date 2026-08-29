@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from personal_ai.api.routers.memories import get_embedding_provider
+from personal_ai.api.dependencies import get_embedding_provider
 from personal_ai.core.auth import create_access_token
 from personal_ai.db.models import Base, ExperienceModel, User
 from personal_ai.db.session import get_db_session

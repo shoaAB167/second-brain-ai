@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     embedding_dimensions: int = DEFAULT_EMBEDDING_DIMENSIONS
     embedding_enabled: bool = True
 
+    # Memory Retrieval & Augmented Chat Settings
+    memory_retrieval_enabled: bool = True
+    memory_retrieval_limit: int = 5
+
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(
@@ -86,6 +90,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"Configured embedding_dimensions ({self.embedding_dimensions}) must match "
                 f"the database schema vector dimension ({DEFAULT_EMBEDDING_DIMENSIONS})."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_memory_retrieval_limit(self) -> "Settings":
+        """Validate that memory_retrieval_limit is between 1 and 20."""
+        if not (1 <= self.memory_retrieval_limit <= 20):
+            raise ValueError(
+                f"Configured memory_retrieval_limit ({self.memory_retrieval_limit}) must be between 1 and 20."
             )
         return self
 

@@ -2,38 +2,18 @@ from typing import Optional
 import uuid
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from personal_ai.api.dependencies import get_current_user_id, get_db_session
-from personal_ai.application.memory import MemoryRetrievalService
-from personal_ai.db.repositories import SQLAlchemyExperienceRepository
-from personal_ai.infrastructure.embedding import (
-    EmbeddingProvider,
-    get_embedding_provider as create_embedding_provider,
+from personal_ai.api.dependencies import (
+    get_current_user_id,
+    get_memory_retrieval_service,
 )
+from personal_ai.application.memory import MemoryRetrievalService
 from personal_ai.models.memory import (
     MemorySearchResponse,
     MemorySearchResultItem,
 )
 
 router = APIRouter()
-
-
-def get_embedding_provider() -> EmbeddingProvider:
-    """Dependency provider constructing configured EmbeddingProvider via factory."""
-    return create_embedding_provider()
-
-
-def get_memory_retrieval_service(
-    session: AsyncSession = Depends(get_db_session),
-    embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
-) -> MemoryRetrievalService:
-    """Dependency provider constructing MemoryRetrievalService with session and embedding provider."""
-    repo = SQLAlchemyExperienceRepository(session=session)
-    return MemoryRetrievalService(
-        embedding_provider=embedding_provider,
-        experience_repo=repo,
-    )
 
 
 @router.get(
