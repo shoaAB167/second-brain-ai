@@ -149,18 +149,18 @@ class ChatService:
                     message=f"Conversation '{request.conversation_id}' not found.",
                     status_code=404,
                 )
+            conv_id = conversation.id
         else:
             conversation = await self._conversation_repo.create_conversation(user_id=user_id)
+            conv_id = conversation.id
             logger.info(
                 "Created new conversation [conversation_id=%s, user_id=%s]",
-                conversation.id,
+                conv_id,
                 user_id,
             )
 
         # 2. Retrieve previous conversation messages in chronological order
-        stored_messages = await self._conversation_repo.get_conversation_messages(
-            conversation.id
-        )
+        stored_messages = await self._conversation_repo.get_conversation_messages(conv_id)
 
         # 3. Retrieve relevant long-term memories (fail-safe enhancement)
         memory_context = await self._retrieve_memory_context(
@@ -178,7 +178,7 @@ class ChatService:
 
         # 5. Persist user message to conversation history
         user_message = await self._conversation_repo.add_message(
-            conversation_id=conversation.id,
+            conversation_id=conv_id,
             role="user",
             content=request.message,
         )
@@ -194,13 +194,13 @@ class ChatService:
 
         # 8. Persist assistant response
         await self._conversation_repo.add_message(
-            conversation_id=conversation.id,
+            conversation_id=conv_id,
             role="assistant",
             content=llm_response.content,
         )
 
         return ChatResponse(
-            conversation_id=conversation.id,
+            conversation_id=conv_id,
             response=llm_response.content,
             provider=llm_response.provider,
             model=llm_response.model,
@@ -233,18 +233,18 @@ class ChatService:
                     message=f"Conversation '{request.conversation_id}' not found.",
                 ).to_sse()
                 return
+            conv_id = conversation.id
         else:
             conversation = await self._conversation_repo.create_conversation(user_id=user_id)
+            conv_id = conversation.id
             logger.info(
                 "Created new conversation thread for streaming [conversation_id=%s, user_id=%s]",
-                conversation.id,
+                conv_id,
                 user_id,
             )
 
         # 2. Retrieve previous conversation messages in chronological order
-        stored_messages = await self._conversation_repo.get_conversation_messages(
-            conversation.id
-        )
+        stored_messages = await self._conversation_repo.get_conversation_messages(conv_id)
 
         # 3. Retrieve relevant long-term memories (fail-safe enhancement)
         memory_context = await self._retrieve_memory_context(
@@ -262,7 +262,7 @@ class ChatService:
 
         # 5. Persist user message to conversation history
         user_message = await self._conversation_repo.add_message(
-            conversation_id=conversation.id,
+            conversation_id=conv_id,
             role="user",
             content=request.message,
         )
@@ -289,7 +289,7 @@ class ChatService:
             # Stream completed successfully: persist exactly ONE assistant message
             full_response_text = "".join(accumulated_chunks)
             await self._conversation_repo.add_message(
-                conversation_id=conversation.id,
+                conversation_id=conv_id,
                 role="assistant",
                 content=full_response_text,
             )
@@ -297,49 +297,49 @@ class ChatService:
             # Emit done event containing conversation_id
             yield ChatStreamEvent(
                 type=StreamEventType.DONE,
-                conversation_id=conversation.id,
+                conversation_id=conv_id,
             ).to_sse()
 
         except LLMAuthenticationException as exc:
-            logger.error("LLM authentication failed during stream [conversation_id=%s]: %s", conversation.id, exc)
+            logger.error("LLM authentication failed during stream [conversation_id=%s]: %s", conv_id, exc)
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
                 message=exc.message,
-                conversation_id=conversation.id,
+                conversation_id=conv_id,
             ).to_sse()
 
         except LLMRateLimitException as exc:
-            logger.error("LLM rate limit exceeded during stream [conversation_id=%s]: %s", conversation.id, exc)
+            logger.error("LLM rate limit exceeded during stream [conversation_id=%s]: %s", conv_id, exc)
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
                 message=exc.message,
-                conversation_id=conversation.id,
+                conversation_id=conv_id,
             ).to_sse()
 
         except LLMConnectionException as exc:
-            logger.error("LLM connection error during stream [conversation_id=%s]: %s", conversation.id, exc)
+            logger.error("LLM connection error during stream [conversation_id=%s]: %s", conv_id, exc)
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
                 message=exc.message,
-                conversation_id=conversation.id,
+                conversation_id=conv_id,
             ).to_sse()
 
         except LLMException as exc:
-            logger.error("LLM domain exception during stream [conversation_id=%s]: %s", conversation.id, exc)
+            logger.error("LLM domain exception during stream [conversation_id=%s]: %s", conv_id, exc)
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
                 message=exc.message,
-                conversation_id=conversation.id,
+                conversation_id=conv_id,
             ).to_sse()
 
         except asyncio.CancelledError:
-            logger.warning("Chat stream cancelled by client [conversation_id=%s]", conversation.id)
+            logger.warning("Chat stream cancelled by client [conversation_id=%s]", conv_id)
             raise
 
         except Exception as exc:
-            logger.error("Unexpected runtime error during chat stream [conversation_id=%s]: %s", conversation.id, exc)
+            logger.error("Unexpected runtime error during chat stream [conversation_id=%s]: %s", conv_id, exc)
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
                 message="An unexpected error occurred during chat streaming.",
-                conversation_id=conversation.id,
+                conversation_id=conv_id,
             ).to_sse()

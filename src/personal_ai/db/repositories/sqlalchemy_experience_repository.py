@@ -179,72 +179,76 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
         bind = self._session.bind
         dialect_name = bind.dialect.name if bind else "postgresql"
 
-        if dialect_name == "sqlite":
-            # SQLite test environment fallback
-            stmt = select(ExperienceModel).where(
-                ExperienceModel.user_id == user_uuid,
-                ExperienceModel.embedding.is_not(None),
-                ExperienceModel.embedding_status == "COMPLETED",
-            )
-            res = await self._session.execute(stmt)
-            models = list(res.scalars().all())
+        try:
+            if dialect_name == "sqlite":
+                # SQLite test environment fallback
+                stmt = select(ExperienceModel).where(
+                    ExperienceModel.user_id == user_uuid,
+                    ExperienceModel.embedding.is_not(None),
+                    ExperienceModel.embedding_status == "COMPLETED",
+                )
+                res = await self._session.execute(stmt)
+                models = list(res.scalars().all())
 
-            scored: List[Tuple[ExperienceModel, float, float]] = []
-            for m in models:
-                if not m.embedding:
-                    continue
-                vec = [float(x) for x in m.embedding]
-                dot = sum(a * b for a, b in zip(vec, query_vector))
-                norm_a = math.sqrt(sum(a * a for a in vec)) or 1.0
-                norm_b = math.sqrt(sum(b * b for b in query_vector)) or 1.0
-                sim = dot / (norm_a * norm_b)
-                dist = 1.0 - sim
+                scored: List[Tuple[ExperienceModel, float, float]] = []
+                for m in models:
+                    if not m.embedding:
+                        continue
+                    vec = [float(x) for x in m.embedding]
+                    dot = sum(a * b for a, b in zip(vec, query_vector))
+                    norm_a = math.sqrt(sum(a * a for a in vec)) or 1.0
+                    norm_b = math.sqrt(sum(b * b for b in query_vector)) or 1.0
+                    sim = dot / (norm_a * norm_b)
+                    dist = 1.0 - sim
 
-                # Filter by similarity threshold BEFORE limit
-                if threshold is not None and sim < threshold:
-                    continue
+                    # Filter by similarity threshold BEFORE limit
+                    if threshold is not None and sim < threshold:
+                        continue
 
-                scored.append((m, dist, sim))
+                    scored.append((m, dist, sim))
 
-            # Order by distance ascending (most similar first)
-            scored.sort(key=lambda item: item[1])
+                # Order by distance ascending (most similar first)
+                scored.sort(key=lambda item: item[1])
 
-            results: List[Tuple[Experience, float]] = []
-            for m, dist, sim in scored[:limit]:
-                results.append((self._model_to_domain(m), float(sim)))
-            return results
+                results: List[Tuple[Experience, float]] = []
+                for m, dist, sim in scored[:limit]:
+                    results.append((self._model_to_domain(m), float(sim)))
+                return results
 
-        else:
-            # PostgreSQL pgvector similarity query: filter by threshold in WHERE clause BEFORE LIMIT
-            distance_expr = ExperienceModel.embedding.cosine_distance(query_vector).label("distance")
-            where_clauses = [
-                ExperienceModel.user_id == user_uuid,
-                ExperienceModel.embedding.is_not(None),
-                ExperienceModel.embedding_status == "COMPLETED",
-            ]
+            else:
+                # PostgreSQL pgvector similarity query: filter by threshold in WHERE clause BEFORE LIMIT
+                distance_expr = ExperienceModel.embedding.cosine_distance(query_vector).label("distance")
+                where_clauses = [
+                    ExperienceModel.user_id == user_uuid,
+                    ExperienceModel.embedding.is_not(None),
+                    ExperienceModel.embedding_status == "COMPLETED",
+                ]
 
-            if threshold is not None:
-                # similarity >= threshold  <=>  (1.0 - distance) >= threshold  <=>  distance <= (1.0 - threshold)
-                max_distance = 1.0 - threshold
-                where_clauses.append(ExperienceModel.embedding.cosine_distance(query_vector) <= max_distance)
+                if threshold is not None:
+                    # similarity >= threshold  <=>  (1.0 - distance) >= threshold  <=>  distance <= (1.0 - threshold)
+                    max_distance = 1.0 - threshold
+                    where_clauses.append(ExperienceModel.embedding.cosine_distance(query_vector) <= max_distance)
 
-            stmt = (
-                select(ExperienceModel, distance_expr)
-                .where(*where_clauses)
-                .order_by(distance_expr.asc())
-                .limit(limit)
-            )
+                stmt = (
+                    select(ExperienceModel, distance_expr)
+                    .where(*where_clauses)
+                    .order_by(distance_expr.asc())
+                    .limit(limit)
+                )
 
-            res = await self._session.execute(stmt)
-            rows = res.all()
+                res = await self._session.execute(stmt)
+                rows = res.all()
 
-            results = []
-            for row in rows:
-                m = row[0]
-                dist = float(row[1]) if row[1] is not None else 1.0
-                sim = 1.0 - dist
-                results.append((self._model_to_domain(m), float(sim)))
-            return results
+                results = []
+                for row in rows:
+                    m = row[0]
+                    dist = float(row[1]) if row[1] is not None else 1.0
+                    sim = 1.0 - dist
+                    results.append((self._model_to_domain(m), float(sim)))
+                return results
+        except Exception:
+            await self._session.rollback()
+            raise
 
     @staticmethod
     def _model_to_domain(model: ExperienceModel) -> Experience:

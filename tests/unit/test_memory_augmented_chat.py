@@ -381,3 +381,61 @@ async def test_17h_streaming_memory_retrieval_failure_continues() -> None:
     # Verify tokens were still streamed and no error event was emitted due to memory retrieval
     assert any("Streamed response without memory" in ev for ev in events)
     assert not any('"type": "error"' in ev or '"type":"error"' in ev for ev in events)
+
+
+@pytest.mark.asyncio
+async def test_db_failure_in_retrieval_leaves_session_usable_for_chat() -> None:
+    """Regression test: A database error during memory retrieval rolls back cleanly and allows subsequent conversation queries."""
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from personal_ai.db.models import Base
+    from personal_ai.db.repositories.sqlalchemy_conversation_repository import SQLAlchemyConversationRepository
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_factory() as session:
+        conv_repo = SQLAlchemyConversationRepository(session=session)
+        user_id = uuid.uuid4()
+
+        # Custom faulty retrieval that simulates a SQL execution failure on the session
+        class FaultyDBRetrievalService(MemoryRetrievalService):
+            def __init__(self) -> None:
+                pass
+
+            async def search(self, user_id, query, limit=5, threshold=None):
+                try:
+                    # Deliberately execute bad SQL statement that fails at DB level
+                    from sqlalchemy import text
+                    await session.execute(text("SELECT non_existent_column FROM non_existent_table;"))
+                except Exception:
+                    await session.rollback()
+                    raise
+                return []
+
+        mock_llm = MagicMock(spec=LLMClient)
+        mock_llm.generate_response = AsyncMock(
+            return_value=LLMResponse(content="Recovered response", provider="gemini", model="gemini-3.5-flash", latency_ms=10.0)
+        )
+
+        service = ChatService(
+            llm_client=mock_llm,
+            conversation_repo=conv_repo,
+            retrieval_service=FaultyDBRetrievalService(),
+        )
+
+        # process_chat must NOT fail with InFailedSQLTransactionError or BrokenPipe
+        res = await service.process_chat(ChatRequest(message="Test DB error recovery"), user_id=user_id)
+
+        assert res.response == "Recovered response"
+        assert res.conversation_id is not None
+
+        # Verify messages successfully persisted to DB despite the previous DB error during retrieval
+        messages = await conv_repo.get_conversation_messages(res.conversation_id)
+        assert len(messages) == 2
+        assert messages[0].content == "Test DB error recovery"
+        assert messages[1].content == "Recovered response"
+
+    await engine.dispose()
+
