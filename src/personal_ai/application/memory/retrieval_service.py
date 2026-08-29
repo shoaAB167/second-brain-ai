@@ -4,6 +4,7 @@ import time
 from typing import List, Optional
 import uuid
 
+from personal_ai.config.settings import get_settings
 from personal_ai.core.exceptions import AppException
 from personal_ai.core.logger import get_logger
 from personal_ai.domain.experience import ExperienceRepository
@@ -52,6 +53,8 @@ class MemoryRetrievalService:
     ) -> List[MemorySearchResult]:
         """Perform semantic similarity search over the authenticated user's experiences.
 
+        Enforces strict limit validation (1 <= limit <= 20) and model consistency invariants.
+
         Args:
             user_id: The authenticated user's UUID.
             query: Natural-language search query.
@@ -62,17 +65,40 @@ class MemoryRetrievalService:
             List[MemorySearchResult]: Ranked list of matching memory search results.
 
         Raises:
-            AppException: If query is invalid or embedding generation encounters an unrecoverable failure.
+            AppException: If query, limit, threshold, or model compatibility invariants are violated.
         """
         if not query or not query.strip():
             raise AppException(message="Search query cannot be empty.", status_code=400)
 
-        # Validate limit invariant: 1 <= limit <= 20
-        bounded_limit = max(1, min(limit, 20))
+        # Requirement 3: Explicit limit validation (no silent clamping)
+        if not isinstance(limit, int) or limit < 1 or limit > 20:
+            raise AppException(
+                message="Result limit must be an integer between 1 and 20.",
+                status_code=400,
+            )
+
+        if threshold is not None and not (-1.0 <= threshold <= 1.0):
+            raise AppException(
+                message="Similarity threshold must be between -1.0 and 1.0.",
+                status_code=400,
+            )
+
+        # Requirement 4: Embedding model consistency invariant validation
+        settings = get_settings()
+        if self._provider.model_name != settings.embedding_model:
+            logger.error(
+                "Embedding model mismatch: provider=%s, settings=%s",
+                self._provider.model_name,
+                settings.embedding_model,
+            )
+            raise AppException(
+                message=f"Query embedding model '{self._provider.model_name}' is incompatible with configured model '{settings.embedding_model}'.",
+                status_code=500,
+            )
 
         start_time = time.perf_counter()
 
-        # Step 1: Generate query embedding vector using existing provider
+        # Step 1: Generate query embedding vector using configured provider
         try:
             query_vector = await self._provider.embed(query.strip())
         except Exception as exc:
@@ -83,7 +109,7 @@ class MemoryRetrievalService:
             )
 
         # Step 2: Validate vector dimension invariant
-        if len(query_vector) != self._provider.dimensions:
+        if len(query_vector) != self._provider.dimensions or len(query_vector) != settings.embedding_dimensions:
             logger.error(
                 "Query vector dimension mismatch [expected=%d, got=%d]",
                 self._provider.dimensions,
@@ -98,7 +124,7 @@ class MemoryRetrievalService:
         scored_experiences = await self._experience_repo.search_by_vector(
             user_id=user_id,
             query_vector=query_vector,
-            limit=bounded_limit,
+            limit=limit,
             threshold=threshold,
         )
 
@@ -107,7 +133,7 @@ class MemoryRetrievalService:
             "Retrieved memories [user_id=%s, count=%d, limit=%d, duration_ms=%.1f]",
             user_id,
             len(scored_experiences),
-            bounded_limit,
+            limit,
             duration_ms,
         )
 

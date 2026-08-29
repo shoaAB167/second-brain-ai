@@ -160,6 +160,7 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
         """Search experiences for a specific user ordered by semantic cosine similarity to query_vector.
 
         Enforces strict user isolation at the database level.
+        Filters by similarity threshold BEFORE applying final LIMIT.
         In PostgreSQL: uses pgvector cosine distance operator (<=>).
         In SQLite (test environment): evaluates cosine distance for user experiences.
 
@@ -198,30 +199,38 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
                 norm_b = math.sqrt(sum(b * b for b in query_vector)) or 1.0
                 sim = dot / (norm_a * norm_b)
                 dist = 1.0 - sim
+
+                # Filter by similarity threshold BEFORE limit
+                if threshold is not None and sim < threshold:
+                    continue
+
                 scored.append((m, dist, sim))
 
             # Order by distance ascending (most similar first)
             scored.sort(key=lambda item: item[1])
 
             results: List[Tuple[Experience, float]] = []
-            for m, dist, sim in scored:
-                if threshold is not None and sim < threshold:
-                    continue
+            for m, dist, sim in scored[:limit]:
                 results.append((self._model_to_domain(m), float(sim)))
-                if len(results) >= limit:
-                    break
             return results
 
         else:
-            # PostgreSQL pgvector similarity query
+            # PostgreSQL pgvector similarity query: filter by threshold in WHERE clause BEFORE LIMIT
             distance_expr = ExperienceModel.embedding.cosine_distance(query_vector).label("distance")
+            where_clauses = [
+                ExperienceModel.user_id == user_uuid,
+                ExperienceModel.embedding.is_not(None),
+                ExperienceModel.embedding_status == "COMPLETED",
+            ]
+
+            if threshold is not None:
+                # similarity >= threshold  <=>  (1.0 - distance) >= threshold  <=>  distance <= (1.0 - threshold)
+                max_distance = 1.0 - threshold
+                where_clauses.append(ExperienceModel.embedding.cosine_distance(query_vector) <= max_distance)
+
             stmt = (
                 select(ExperienceModel, distance_expr)
-                .where(
-                    ExperienceModel.user_id == user_uuid,
-                    ExperienceModel.embedding.is_not(None),
-                    ExperienceModel.embedding_status == "COMPLETED",
-                )
+                .where(*where_clauses)
                 .order_by(distance_expr.asc())
                 .limit(limit)
             )
@@ -234,8 +243,6 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
                 m = row[0]
                 dist = float(row[1]) if row[1] is not None else 1.0
                 sim = 1.0 - dist
-                if threshold is not None and sim < threshold:
-                    continue
                 results.append((self._model_to_domain(m), float(sim)))
             return results
 

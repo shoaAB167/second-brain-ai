@@ -74,18 +74,19 @@ class InMemoryExperienceRepository(ExperienceRepository):
             norm_b = math.sqrt(sum(b * b for b in query_vector)) or 1.0
             sim = dot / (norm_a * norm_b)
             dist = 1.0 - sim
+
+            # Filter threshold BEFORE limit
+            if threshold is not None and sim < threshold:
+                continue
+
             scored.append((exp, dist, sim))
 
         # Sort by distance ascending (similarity descending)
         scored.sort(key=lambda item: item[1])
 
         results: List[Tuple[Experience, float]] = []
-        for exp, dist, sim in scored:
-            if threshold is not None and sim < threshold:
-                continue
+        for exp, dist, sim in scored[:limit]:
             results.append((exp, sim))
-            if len(results) >= limit:
-                break
         return results
 
 
@@ -306,67 +307,101 @@ async def test_g_limit_enforced() -> None:
 
 
 @pytest.mark.asyncio
-async def test_h_maximum_limit_clamped_to_20() -> None:
-    """Requirement 18H: Requesting limit > 20 is clamped to 20."""
+async def test_h_invalid_limits_raise_app_exception() -> None:
+    """Requirement 3: Explicit limit validation (limits < 1 or > 20 raise 400 AppException)."""
     user_id = uuid.uuid4()
     provider = MockEmbeddingProvider(dimensions=1536)
     repo = InMemoryExperienceRepository()
-
-    for i in range(25):
-        vec = await provider.embed(f"Item {i}")
-        await repo.create(
-            Experience(
-                id=uuid.uuid4(),
-                user_id=str(user_id),
-                content=f"Item {i}",
-                type=ExperienceType.FACT,
-                source=ExperienceSource.CHAT,
-                embedding=vec,
-                embedding_status="COMPLETED",
-            )
-        )
-
     service = MemoryRetrievalService(embedding_provider=provider, experience_repo=repo)
-    results = await service.search(user_id=user_id, query="Item", limit=100)
-    assert len(results) == 20
+
+    with pytest.raises(AppException) as exc_0:
+        await service.search(user_id=user_id, query="Item", limit=0)
+    assert exc_0.value.status_code == 400
+    assert "between 1 and 20" in exc_0.value.message
+
+    with pytest.raises(AppException) as exc_neg:
+        await service.search(user_id=user_id, query="Item", limit=-5)
+    assert exc_neg.value.status_code == 400
+
+    with pytest.raises(AppException) as exc_25:
+        await service.search(user_id=user_id, query="Item", limit=25)
+    assert exc_25.value.status_code == 400
 
 
 @pytest.mark.asyncio
-async def test_i_threshold_filters_low_similarity() -> None:
-    """Requirement 18I: Results below minimum similarity threshold are filtered."""
+async def test_regression_threshold_plus_limit_interaction() -> None:
+    """Requirement 2: Regression test proving threshold filtering happens before applying LIMIT.
+
+    Candidate similarities: 0.95, 0.91, 0.89, 0.87.
+    With threshold=0.90, the 0.89 result must never consume a result slot.
+    """
     user_id = uuid.uuid4()
     provider = MockEmbeddingProvider(dimensions=1536)
-    repo = InMemoryExperienceRepository()
 
-    exact_vec = await provider.embed("Exact match query text")
-    different_vec = await provider.embed("Completely different unrelated concept")
+    # Mock repository returning deterministic similarities based on custom mock
+    repo = MagicMock(spec=ExperienceRepository)
 
-    exp_exact = Experience(
-        id=uuid.uuid4(),
-        user_id=str(user_id),
-        content="Exact match query text",
-        source=ExperienceSource.CHAT,
-        embedding=exact_vec,
-        embedding_status="COMPLETED",
-    )
-    exp_different = Experience(
-        id=uuid.uuid4(),
-        user_id=str(user_id),
-        content="Completely different unrelated concept",
-        source=ExperienceSource.CHAT,
-        embedding=different_vec,
-        embedding_status="COMPLETED",
-    )
+    exp_95 = Experience(id=uuid.uuid4(), user_id=str(user_id), content="Match 0.95", source=ExperienceSource.CHAT)
+    exp_91 = Experience(id=uuid.uuid4(), user_id=str(user_id), content="Match 0.91", source=ExperienceSource.CHAT)
+    exp_89 = Experience(id=uuid.uuid4(), user_id=str(user_id), content="Match 0.89", source=ExperienceSource.CHAT)
+    exp_87 = Experience(id=uuid.uuid4(), user_id=str(user_id), content="Match 0.87", source=ExperienceSource.CHAT)
 
-    await repo.create(exp_exact)
-    await repo.create(exp_different)
+    candidates = [
+        (exp_95, 0.95),
+        (exp_91, 0.91),
+        (exp_89, 0.89),
+        (exp_87, 0.87),
+    ]
+
+    async def mock_search_by_vector(user_id, query_vector, limit=5, threshold=None):
+        filtered = [(e, sim) for e, sim in candidates if threshold is None or sim >= threshold]
+        return filtered[:limit]
+
+    repo.search_by_vector = AsyncMock(side_effect=mock_search_by_vector)
 
     service = MemoryRetrievalService(embedding_provider=provider, experience_repo=repo)
-    # Filter with threshold = 0.95
-    results = await service.search(user_id=user_id, query="Exact match query text", threshold=0.95)
 
-    assert len(results) == 1
-    assert results[0].experience_id == exp_exact.id
+    # Case 1: limit = 2, threshold = 0.90 -> expected [0.95, 0.91]
+    res_limit_2 = await service.search(user_id=user_id, query="test", limit=2, threshold=0.90)
+    assert len(res_limit_2) == 2
+    assert [r.similarity for r in res_limit_2] == [0.95, 0.91]
+
+    # Case 2: limit = 3, threshold = 0.90 -> expected [0.95, 0.91] (0.89 is not included)
+    res_limit_3 = await service.search(user_id=user_id, query="test", limit=3, threshold=0.90)
+    assert len(res_limit_3) == 2
+    assert [r.similarity for r in res_limit_3] == [0.95, 0.91]
+
+
+@pytest.mark.asyncio
+async def test_invalid_threshold_raises_app_exception() -> None:
+    """Verify threshold outside [-1.0, 1.0] raises 400 AppException."""
+    user_id = uuid.uuid4()
+    provider = MockEmbeddingProvider()
+    repo = InMemoryExperienceRepository()
+    service = MemoryRetrievalService(embedding_provider=provider, experience_repo=repo)
+
+    with pytest.raises(AppException) as exc_low:
+        await service.search(user_id=user_id, query="test", threshold=-1.5)
+    assert exc_low.value.status_code == 400
+
+    with pytest.raises(AppException) as exc_high:
+        await service.search(user_id=user_id, query="test", threshold=1.5)
+    assert exc_high.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_incompatible_embedding_model_raises_app_exception() -> None:
+    """Requirement 4: Provider using incompatible model name raises 500 AppException."""
+    user_id = uuid.uuid4()
+    incompatible_provider = MockEmbeddingProvider(model="text-embedding-ada-002")
+    repo = InMemoryExperienceRepository()
+    service = MemoryRetrievalService(embedding_provider=incompatible_provider, experience_repo=repo)
+
+    with pytest.raises(AppException) as exc_info:
+        await service.search(user_id=user_id, query="test")
+
+    assert exc_info.value.status_code == 500
+    assert "incompatible with configured model" in exc_info.value.message
 
 
 @pytest.mark.asyncio
@@ -389,6 +424,7 @@ async def test_k_dimension_mismatch_raises_app_exception() -> None:
     """Requirement 18K: Provider returning incorrect vector dimension raises clean 500 AppException."""
     user_id = uuid.uuid4()
     provider = MagicMock(spec=MockEmbeddingProvider)
+    provider.model_name = "text-embedding-3-small"
     provider.dimensions = 1536
     # Provider returns wrong vector length 512
     provider.embed = AsyncMock(return_value=[0.1] * 512)
