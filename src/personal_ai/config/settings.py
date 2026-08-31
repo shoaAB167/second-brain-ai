@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     # LLM Settings
     llm_provider: str = "gemini"
-    llm_model: str = "gemini-3.5-flash"
+    llm_model: str = "gemini-3.6-flash"
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
