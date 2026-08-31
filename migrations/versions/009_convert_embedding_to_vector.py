@@ -27,19 +27,7 @@ def upgrade() -> None:
         op.execute("""
             DO $$
             BEGIN
-                -- 1. Ensure user_id column is UUID type
-                IF EXISTS (
-                    SELECT 1 FROM information_schema.columns 
-                    WHERE table_name = 'experiences' 
-                      AND column_name = 'user_id' 
-                      AND data_type = 'character varying'
-                ) THEN
-                    ALTER TABLE experiences 
-                        ALTER COLUMN user_id TYPE uuid 
-                        USING (CASE WHEN user_id IS NULL OR user_id = '' THEN NULL ELSE user_id::uuid END);
-                END IF;
-
-                -- 2. Check if embedding column exists and is json
+                -- Check if embedding column exists and is json
                 IF EXISTS (
                     SELECT 1 FROM information_schema.columns 
                     WHERE table_name = 'experiences' 

@@ -9,7 +9,7 @@ export default defineConfig({
     host: true,
   },
   test: {
-    environment: "happy-dom",
+    environment: "jsdom",
     globals: true,
   },
 });
