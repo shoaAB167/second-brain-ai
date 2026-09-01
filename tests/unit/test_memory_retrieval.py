@@ -457,3 +457,36 @@ async def test_l_empty_query_raises_bad_request() -> None:
 
     assert exc_info.value.status_code == 400
     assert "cannot be empty" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_retrieval_returns_importance_and_lifecycle() -> None:
+    """Verify MemorySearchResult preserves importance and lifecycle of retrieved experience."""
+    from personal_ai.domain.experience import ExperienceImportance, ExperienceLifecycle
+
+    user_id = uuid.uuid4()
+    provider = MockEmbeddingProvider(dimensions=1536)
+    repo = InMemoryExperienceRepository()
+
+    vec = await provider.embed("gym routine 6 PM")
+    exp = Experience(
+        content="Usually goes to the gym around 6 PM",
+        source=ExperienceSource.CHAT,
+        user_id=str(user_id),
+        type=ExperienceType.HABIT,
+        importance=ExperienceImportance.HIGH,
+        lifecycle=ExperienceLifecycle.RECURRING,
+        embedding=vec,
+        embedding_status="COMPLETED",
+    )
+    await repo.create(exp)
+
+    service = MemoryRetrievalService(embedding_provider=provider, experience_repo=repo)
+    results = await service.search(user_id=user_id, query="gym routine 6 PM", limit=5)
+
+    assert len(results) == 1
+    assert results[0].importance == "HIGH"
+    assert results[0].lifecycle == "RECURRING"
+    assert results[0].type == "HABIT"
+    assert "usually" in results[0].content.lower() or "around" in results[0].content.lower()
+

@@ -18,6 +18,8 @@ def test_experience_entity_creation_valid() -> None:
     assert exp.content == content
     assert exp.source == ExperienceSource.CHAT
     assert exp.status == ExperienceStatus.RECEIVED
+    assert exp.importance.value == "MEDIUM"
+    assert exp.lifecycle.value == "STABLE"
     assert isinstance(exp.created_at, datetime)
     assert exp.created_at.tzinfo == timezone.utc
 
@@ -48,3 +50,29 @@ def test_experience_domain_isolation() -> None:
     assert "FastAPI" not in imported_modules
     assert "SQLAlchemy" not in imported_modules
     assert "Base" not in imported_modules
+
+
+def test_experience_entity_custom_importance_and_lifecycle() -> None:
+    """Verify creation of Experience with custom importance and lifecycle."""
+    from personal_ai.domain.experience import ExperienceImportance, ExperienceLifecycle, ExperienceType
+
+    exp = Experience(
+        content="I usually go to gym at 6 PM",
+        source=ExperienceSource.CHAT,
+        type=ExperienceType.HABIT,
+        importance=ExperienceImportance.MEDIUM,
+        lifecycle=ExperienceLifecycle.RECURRING,
+    )
+    assert exp.importance == ExperienceImportance.MEDIUM
+    assert exp.lifecycle == ExperienceLifecycle.RECURRING
+    assert exp.type == ExperienceType.HABIT
+
+
+def test_experience_entity_rejects_invalid_importance_and_lifecycle() -> None:
+    """Verify invalid importance and lifecycle raise ValueError."""
+    with pytest.raises(ValueError, match="Invalid experience importance"):
+        Experience(content="test", source=ExperienceSource.CHAT, importance="SUPER_HIGH")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="Invalid experience lifecycle"):
+        Experience(content="test", source=ExperienceSource.CHAT, lifecycle="FOREVER")  # type: ignore[arg-type]
+

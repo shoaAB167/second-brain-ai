@@ -1,6 +1,12 @@
 from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from personal_ai.domain.experience.enums import (
+    ExperienceImportance,
+    ExperienceLifecycle,
+    ExperienceType,
+)
+
 
 class ExperienceExtractionResult(BaseModel):
     """Structured result produced by the AI Experience Extractor.
@@ -16,15 +22,27 @@ class ExperienceExtractionResult(BaseModel):
     )
     content: Optional[str] = Field(
         default=None,
-        description="Canonical concise representation of the user-specific experience.",
+        description="Canonical concise representation of the user-specific experience preserving qualifiers.",
+    )
+    type: Optional[ExperienceType] = Field(
+        default=None,
+        description="Categorical memory type (FACT, GOAL, PREFERENCE, HABIT, PROJECT, EVENT, STATE, etc.).",
     )
     domain: Optional[str] = Field(
         default=None,
-        description="Categorical domain (e.g. 'career', 'work', 'fitness', 'projects').",
+        description="Categorical domain (e.g. 'career', 'work', 'fitness', 'personal', 'projects').",
+    )
+    importance: Optional[ExperienceImportance] = Field(
+        default=ExperienceImportance.MEDIUM,
+        description="Bounded importance level for long-term personal memory (LOW, MEDIUM, HIGH).",
+    )
+    lifecycle: Optional[ExperienceLifecycle] = Field(
+        default=ExperienceLifecycle.STABLE,
+        description="Temporal durability and lifecycle scope (STABLE, RECURRING, TEMPORARY, TIME_BOUND).",
     )
     status: Optional[str] = Field(
         default="active",
-        description="Lifecycle status of the experience (e.g. 'active').",
+        description="Status of the experience (e.g. 'active').",
     )
     confidence: float = Field(
         ...,
@@ -68,6 +86,50 @@ class ExperienceExtractionResult(BaseModel):
             return None
         val_str = str(value).strip()
         return val_str if val_str else None
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def validate_type(cls, value: Any) -> Optional[ExperienceType]:
+        """Validate and normalize experience type."""
+        if value is None:
+            return None
+        if isinstance(value, ExperienceType):
+            return value
+        val_str = str(value).upper().strip()
+        if val_str in ("EMOTION", "EMOTION_STATE"):
+            val_str = "STATE"
+        try:
+            return ExperienceType(val_str)
+        except ValueError:
+            return ExperienceType.OTHER
+
+    @field_validator("importance", mode="before")
+    @classmethod
+    def validate_importance(cls, value: Any) -> Optional[ExperienceImportance]:
+        """Validate and normalize importance."""
+        if value is None:
+            return ExperienceImportance.MEDIUM
+        if isinstance(value, ExperienceImportance):
+            return value
+        val_str = str(value).upper().strip()
+        try:
+            return ExperienceImportance(val_str)
+        except ValueError:
+            return ExperienceImportance.MEDIUM
+
+    @field_validator("lifecycle", mode="before")
+    @classmethod
+    def validate_lifecycle(cls, value: Any) -> Optional[ExperienceLifecycle]:
+        """Validate and normalize lifecycle."""
+        if value is None:
+            return ExperienceLifecycle.STABLE
+        if isinstance(value, ExperienceLifecycle):
+            return value
+        val_str = str(value).upper().strip()
+        try:
+            return ExperienceLifecycle(val_str)
+        except ValueError:
+            return ExperienceLifecycle.STABLE
 
     @model_validator(mode="after")
     def validate_success_consistency(self) -> "ExperienceExtractionResult":

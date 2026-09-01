@@ -15,7 +15,7 @@ class ExperienceSource(str, Enum):
 
 
 class ExperienceStatus(str, Enum):
-    """Lifecycle status states for experiences."""
+    """Processing status states for experiences."""
     RECEIVED = "RECEIVED"
     PROCESSING = "PROCESSING"
     PROCESSED = "PROCESSED"
@@ -24,13 +24,29 @@ class ExperienceStatus(str, Enum):
 
 class ExperienceType(str, Enum):
     """Taxonomy types for classified experiences."""
-    GOAL = "GOAL"
-    DECISION = "DECISION"
-    PREFERENCE = "PREFERENCE"
     FACT = "FACT"
-    EVENT = "EVENT"
-    RELATIONSHIP = "RELATIONSHIP"
-    EMOTION_STATE = "EMOTION_STATE"
+    GOAL = "GOAL"
+    PREFERENCE = "PREFERENCE"
     HABIT = "HABIT"
     PROJECT = "PROJECT"
+    EVENT = "EVENT"
+    STATE = "STATE"
+    DECISION = "DECISION"
+    RELATIONSHIP = "RELATIONSHIP"
+    EMOTION_STATE = "EMOTION_STATE"
     OTHER = "OTHER"
+
+
+class ExperienceImportance(str, Enum):
+    """Bounded importance levels for long-term personal memory."""
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class ExperienceLifecycle(str, Enum):
+    """Temporal durability and lifecycle scopes for personal memories."""
+    STABLE = "STABLE"
+    RECURRING = "RECURRING"
+    TEMPORARY = "TEMPORARY"
+    TIME_BOUND = "TIME_BOUND"

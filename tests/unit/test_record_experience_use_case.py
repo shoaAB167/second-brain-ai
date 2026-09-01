@@ -97,3 +97,28 @@ async def test_record_experience_use_case_rejects_invalid_source() -> None:
     assert exc_info.value.status_code == 400
     assert "Invalid experience source" in exc_info.value.message
     assert len(repo.created_experiences) == 0
+
+
+@pytest.mark.asyncio
+async def test_record_experience_with_importance_and_lifecycle() -> None:
+    """Verify RecordExperience sets importance and lifecycle properly."""
+    from personal_ai.domain.experience import ExperienceImportance, ExperienceLifecycle, ExperienceType
+
+    repo = MockExperienceRepository()
+    use_case = RecordExperience(repository=repo)
+
+    result = await use_case.execute(
+        content="Usually goes to gym at 6 PM",
+        source="CHAT",
+        user_id="user_123",
+        type=ExperienceType.HABIT,
+        importance=ExperienceImportance.MEDIUM,
+        lifecycle=ExperienceLifecycle.RECURRING,
+    )
+
+    assert result.importance == ExperienceImportance.MEDIUM
+    assert result.lifecycle == ExperienceLifecycle.RECURRING
+    assert result.type == ExperienceType.HABIT
+    assert repo.created_experiences[0].importance == ExperienceImportance.MEDIUM
+    assert repo.created_experiences[0].lifecycle == ExperienceLifecycle.RECURRING
+

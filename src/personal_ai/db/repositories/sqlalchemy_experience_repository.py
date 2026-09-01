@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from personal_ai.db.models import ExperienceModel
 from personal_ai.domain.experience import (
     Experience,
+    ExperienceImportance,
+    ExperienceLifecycle,
     ExperienceRepository,
     ExperienceSource,
     ExperienceStatus,
@@ -46,6 +48,14 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             experience.type.value if hasattr(experience.type, "value") else str(experience.type)
         ) if experience.type else None
 
+        exp_importance_val = (
+            experience.importance.value if hasattr(experience.importance, "value") else str(experience.importance)
+        ) if experience.importance else "MEDIUM"
+
+        exp_lifecycle_val = (
+            experience.lifecycle.value if hasattr(experience.lifecycle, "value") else str(experience.lifecycle)
+        ) if experience.lifecycle else "STABLE"
+
         model = ExperienceModel(
             id=experience.id,
             user_id=user_id_val,
@@ -53,6 +63,8 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             content=experience.content,
             type=exp_type_val,
             domain=experience.domain,
+            importance=exp_importance_val,
+            lifecycle=exp_lifecycle_val,
             extraction_confidence=experience.extraction_confidence,
             embedding=experience.embedding,
             embedding_model=experience.embedding_model,
@@ -99,6 +111,12 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             experience.type.value if hasattr(experience.type, "value") else str(experience.type)
         ) if experience.type else None
         model.domain = experience.domain
+        model.importance = (
+            experience.importance.value if hasattr(experience.importance, "value") else str(experience.importance)
+        ) if experience.importance else "MEDIUM"
+        model.lifecycle = (
+            experience.lifecycle.value if hasattr(experience.lifecycle, "value") else str(experience.lifecycle)
+        ) if experience.lifecycle else "STABLE"
         model.extraction_confidence = experience.extraction_confidence
         model.embedding = experience.embedding
         model.embedding_model = experience.embedding_model
@@ -260,6 +278,20 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             except ValueError:
                 exp_type = None
 
+        exp_importance = ExperienceImportance.MEDIUM
+        if getattr(model, "importance", None):
+            try:
+                exp_importance = ExperienceImportance(model.importance)
+            except ValueError:
+                exp_importance = ExperienceImportance.MEDIUM
+
+        exp_lifecycle = ExperienceLifecycle.STABLE
+        if getattr(model, "lifecycle", None):
+            try:
+                exp_lifecycle = ExperienceLifecycle(model.lifecycle)
+            except ValueError:
+                exp_lifecycle = ExperienceLifecycle.STABLE
+
         return Experience(
             id=model.id,
             user_id=str(model.user_id) if model.user_id else None,
@@ -267,6 +299,8 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             content=model.content,
             type=exp_type,
             domain=model.domain,
+            importance=exp_importance,
+            lifecycle=exp_lifecycle,
             extraction_confidence=model.extraction_confidence,
             embedding=[float(x) for x in model.embedding] if model.embedding is not None else None,
             embedding_model=model.embedding_model,

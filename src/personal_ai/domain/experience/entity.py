@@ -1,9 +1,15 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Union
 import uuid
 
-from personal_ai.domain.experience.enums import ExperienceSource, ExperienceStatus, ExperienceType
+from personal_ai.domain.experience.enums import (
+    ExperienceImportance,
+    ExperienceLifecycle,
+    ExperienceSource,
+    ExperienceStatus,
+    ExperienceType,
+)
 
 
 def utc_now() -> datetime:
@@ -26,6 +32,8 @@ class Experience:
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     type: Optional[ExperienceType] = None
     domain: Optional[str] = None
+    importance: ExperienceImportance = field(default=ExperienceImportance.MEDIUM)
+    lifecycle: ExperienceLifecycle = field(default=ExperienceLifecycle.STABLE)
     status: ExperienceStatus = field(default=ExperienceStatus.RECEIVED)
     extraction_confidence: Optional[float] = None
     embedding: Optional[List[float]] = None
@@ -57,8 +65,22 @@ class Experience:
         if isinstance(self.type, str) and self.type:
             val_str = self.type.upper().strip()
             if val_str == "EMOTION":
-                val_str = "EMOTION_STATE"
+                val_str = "STATE"
+            elif val_str == "EMOTION_STATE":
+                val_str = "STATE"
             try:
                 self.type = ExperienceType(val_str)
             except ValueError:
                 raise ValueError(f"Invalid experience type: '{self.type}'.")
+
+        if isinstance(self.importance, str):
+            try:
+                self.importance = ExperienceImportance(self.importance.upper().strip())
+            except ValueError:
+                raise ValueError(f"Invalid experience importance: '{self.importance}'.")
+
+        if isinstance(self.lifecycle, str):
+            try:
+                self.lifecycle = ExperienceLifecycle(self.lifecycle.upper().strip())
+            except ValueError:
+                raise ValueError(f"Invalid experience lifecycle: '{self.lifecycle}'.")

@@ -21,10 +21,12 @@ class MemorySearchResult:
     type: Optional[str]
     content: str
     domain: Optional[str]
-    status: str
-    similarity: float
-    source_message_id: Optional[uuid.UUID]
-    created_at: datetime
+    importance: Optional[str] = "MEDIUM"
+    lifecycle: Optional[str] = "STABLE"
+    status: str = "RECEIVED"
+    similarity: float = 0.0
+    source_message_id: Optional[uuid.UUID] = None
+    created_at: Optional[datetime] = None
 
 
 class MemoryRetrievalService:
@@ -140,12 +142,16 @@ class MemoryRetrievalService:
         # Step 4: Map to clean application result models
         results: List[MemorySearchResult] = []
         for exp, similarity in scored_experiences:
+            exp_imp = exp.importance.value if hasattr(exp.importance, "value") else (str(exp.importance) if exp.importance else "MEDIUM")
+            exp_life = exp.lifecycle.value if hasattr(exp.lifecycle, "value") else (str(exp.lifecycle) if exp.lifecycle else "STABLE")
             results.append(
                 MemorySearchResult(
                     experience_id=exp.id,
                     type=exp.type.value if exp.type and hasattr(exp.type, "value") else (str(exp.type) if exp.type else None),
                     content=exp.content,
                     domain=exp.domain,
+                    importance=exp_imp,
+                    lifecycle=exp_life,
                     status=exp.status.value if hasattr(exp.status, "value") else str(exp.status),
                     similarity=round(similarity, 4),
                     source_message_id=exp.source_message_id,

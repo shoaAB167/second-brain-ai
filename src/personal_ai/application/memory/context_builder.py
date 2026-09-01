@@ -32,6 +32,10 @@ class MemoryContextBuilder:
                 lines.append(f"Type: {mem.type}")
             if mem.domain:
                 lines.append(f"Domain: {mem.domain}")
+            if mem.importance:
+                lines.append(f"Importance: {mem.importance}")
+            if mem.lifecycle:
+                lines.append(f"Lifecycle: {mem.lifecycle}")
             lines.append(f"Content: {mem.content.strip()}")
             entries.append("\n".join(lines))
 
