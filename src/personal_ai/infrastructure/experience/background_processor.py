@@ -12,6 +12,12 @@ from personal_ai.application.experience.background_processor import (
 )
 from personal_ai.application.experience.classifier import ExperienceClassifier
 from personal_ai.application.experience.embedding_service import ExperienceEmbeddingService
+from personal_ai.application.experience.evolution_classifier import (
+    ExperienceEvolutionClassifier,
+)
+from personal_ai.application.experience.evolution_service import (
+    ExperienceEvolutionService,
+)
 from personal_ai.application.experience.extractor import ExperienceExtractor
 from personal_ai.application.experience.promotion import (
     ExperiencePromotionService,
@@ -23,6 +29,9 @@ from personal_ai.core.logger import get_logger
 from personal_ai.db.models import Message
 from personal_ai.db.repositories.sqlalchemy_experience_classification_repository import (
     SQLAlchemyExperienceClassificationRepository,
+)
+from personal_ai.db.repositories.sqlalchemy_experience_relationship_repository import (
+    SQLAlchemyExperienceRelationshipRepository,
 )
 from personal_ai.db.repositories.sqlalchemy_experience_repository import (
     SQLAlchemyExperienceRepository,
@@ -45,6 +54,7 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
         strategy: Optional[PromotionStrategy] = None,
         extractor: Optional[ExperienceExtractor] = None,
         embedding_provider: Optional[EmbeddingProvider] = None,
+        evolution_classifier: Optional[ExperienceEvolutionClassifier] = None,
     ) -> None:
         """Initialize background experience processor.
 
@@ -54,12 +64,14 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
             strategy: Optional PromotionStrategy override for tests or custom policies.
             extractor: Optional ExperienceExtractor for structured experience extraction.
             embedding_provider: Optional EmbeddingProvider override for tests or custom models.
+            evolution_classifier: Optional ExperienceEvolutionClassifier override for tests.
         """
         self._session_factory = session_factory
         self._llm_client = llm_client
         self._strategy = strategy
         self._extractor = extractor
         self._embedding_provider = embedding_provider
+        self._evolution_classifier = evolution_classifier
 
     async def process_background_promotion(
         self,
@@ -76,13 +88,16 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
                 context_messages: List[LLMMessage] = []
                 limit = settings.experience_classifier_context_messages
                 if message.conversation_id and limit > 0:
+                    where_conds = [
+                        Message.conversation_id == message.conversation_id,
+                        Message.id != message.id,
+                    ]
+                    if message.created_at is not None:
+                        where_conds.append(Message.created_at <= message.created_at)
+
                     stmt = (
                         select(Message)
-                        .where(
-                            Message.conversation_id == message.conversation_id,
-                            Message.id != message.id,
-                            Message.created_at <= message.created_at,
-                        )
+                        .where(*where_conds)
                         .order_by(Message.created_at.desc())
                         .limit(limit)
                     )
@@ -182,3 +197,31 @@ class SQLAlchemyBackgroundExperienceProcessor(BackgroundExperienceProcessor):
                     promoted_experience.id,
                     update_exc,
                 )
+
+            # TRANSACTION 3: Memory Evolution & Relationship Discovery (PR #16)
+            if embed_res.success and user_id:
+                try:
+                    async with self._session_factory() as evo_session:
+                        evo_exp_repo = SQLAlchemyExperienceRepository(session=evo_session)
+                        evo_rel_repo = SQLAlchemyExperienceRelationshipRepository(session=evo_session)
+                        evo_classifier = self._evolution_classifier or ExperienceEvolutionClassifier(
+                            llm_client=self._llm_client
+                        )
+                        evo_service = ExperienceEvolutionService(
+                            experience_repo=evo_exp_repo,
+                            relationship_repo=evo_rel_repo,
+                            classifier=evo_classifier,
+                        )
+                        fresh_exp = await evo_exp_repo.get_by_id(promoted_experience.id)
+                        if fresh_exp and fresh_exp.embedding:
+                            await evo_service.evolve_experience(
+                                experience=fresh_exp,
+                                user_id=user_id,
+                            )
+                except Exception as evo_exc:
+                    logger.error(
+                        "Background memory evolution failed safely [experience_id=%s, user_id=%s]: %s",
+                        promoted_experience.id,
+                        user_id,
+                        evo_exc,
+                    )

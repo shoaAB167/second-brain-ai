@@ -6,6 +6,7 @@ import uuid
 from personal_ai.domain.experience.enums import (
     ExperienceImportance,
     ExperienceLifecycle,
+    ExperienceLifecycleStatus,
     ExperienceSource,
     ExperienceStatus,
     ExperienceType,
@@ -34,6 +35,7 @@ class Experience:
     domain: Optional[str] = None
     importance: ExperienceImportance = field(default=ExperienceImportance.MEDIUM)
     lifecycle: ExperienceLifecycle = field(default=ExperienceLifecycle.STABLE)
+    lifecycle_status: ExperienceLifecycleStatus = field(default=ExperienceLifecycleStatus.ACTIVE)
     status: ExperienceStatus = field(default=ExperienceStatus.RECEIVED)
     extraction_confidence: Optional[float] = None
     embedding: Optional[List[float]] = None
@@ -84,3 +86,9 @@ class Experience:
                 self.lifecycle = ExperienceLifecycle(self.lifecycle.upper().strip())
             except ValueError:
                 raise ValueError(f"Invalid experience lifecycle: '{self.lifecycle}'.")
+
+        if isinstance(self.lifecycle_status, str):
+            try:
+                self.lifecycle_status = ExperienceLifecycleStatus(self.lifecycle_status.upper().strip())
+            except ValueError:
+                raise ValueError(f"Invalid experience lifecycle status: '{self.lifecycle_status}'.")

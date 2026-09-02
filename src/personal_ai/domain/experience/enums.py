@@ -50,3 +50,20 @@ class ExperienceLifecycle(str, Enum):
     RECURRING = "RECURRING"
     TEMPORARY = "TEMPORARY"
     TIME_BOUND = "TIME_BOUND"
+
+
+class ExperienceLifecycleStatus(str, Enum):
+    """Active vs superseded vs expired state for memory evolution."""
+    ACTIVE = "ACTIVE"
+    SUPERSEDED = "SUPERSEDED"
+    EXPIRED = "EXPIRED"
+
+
+class ExperienceRelationshipType(str, Enum):
+    """Evolution relationship classifications between experiences."""
+    REINFORCES = "REINFORCES"
+    UPDATES = "UPDATES"
+    CONTRADICTS = "CONTRADICTS"
+    SUPERSEDES = "SUPERSEDES"
+    RELATED = "RELATED"
+    UNRELATED = "UNRELATED"

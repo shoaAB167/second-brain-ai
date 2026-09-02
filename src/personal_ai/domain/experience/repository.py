@@ -66,6 +66,7 @@ class ExperienceRepository(ABC):
         query_vector: List[float],
         limit: int = 5,
         threshold: Optional[float] = None,
+        lifecycle_status: Optional[str] = "ACTIVE",
     ) -> List[Tuple[Experience, float]]:
         """Search experiences for a specific user ordered by semantic similarity to query_vector.
 
@@ -76,6 +77,7 @@ class ExperienceRepository(ABC):
             query_vector: Embedding vector of the search query.
             limit: Maximum number of results to return (default: 5).
             threshold: Optional minimum cosine similarity score threshold (in [-1.0, 1.0]).
+            lifecycle_status: Optional filter on lifecycle_status (default: 'ACTIVE'). If None, returns all statuses.
 
         Returns:
             List[Tuple[Experience, float]]: List of (Experience, similarity_score) tuples ordered by descending similarity.

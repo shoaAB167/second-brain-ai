@@ -12,6 +12,7 @@ from personal_ai.domain.experience import (
     Experience,
     ExperienceImportance,
     ExperienceLifecycle,
+    ExperienceLifecycleStatus,
     ExperienceRepository,
     ExperienceSource,
     ExperienceStatus,
@@ -56,6 +57,10 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             experience.lifecycle.value if hasattr(experience.lifecycle, "value") else str(experience.lifecycle)
         ) if experience.lifecycle else "STABLE"
 
+        exp_lifecycle_status_val = (
+            experience.lifecycle_status.value if hasattr(experience.lifecycle_status, "value") else str(experience.lifecycle_status)
+        ) if experience.lifecycle_status else "ACTIVE"
+
         model = ExperienceModel(
             id=experience.id,
             user_id=user_id_val,
@@ -65,6 +70,7 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             domain=experience.domain,
             importance=exp_importance_val,
             lifecycle=exp_lifecycle_val,
+            lifecycle_status=exp_lifecycle_status_val,
             extraction_confidence=experience.extraction_confidence,
             embedding=experience.embedding,
             embedding_model=experience.embedding_model,
@@ -117,6 +123,9 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
         model.lifecycle = (
             experience.lifecycle.value if hasattr(experience.lifecycle, "value") else str(experience.lifecycle)
         ) if experience.lifecycle else "STABLE"
+        model.lifecycle_status = (
+            experience.lifecycle_status.value if hasattr(experience.lifecycle_status, "value") else str(experience.lifecycle_status)
+        ) if experience.lifecycle_status else "ACTIVE"
         model.extraction_confidence = experience.extraction_confidence
         model.embedding = experience.embedding
         model.embedding_model = experience.embedding_model
@@ -174,6 +183,7 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
         query_vector: List[float],
         limit: int = 5,
         threshold: Optional[float] = None,
+        lifecycle_status: Optional[str] = "ACTIVE",
     ) -> List[Tuple[Experience, float]]:
         """Search experiences for a specific user ordered by semantic cosine similarity to query_vector.
 
@@ -187,6 +197,7 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             query_vector: Embedding vector for semantic comparison.
             limit: Maximum number of ranked results to return.
             threshold: Optional minimum cosine similarity threshold in [-1.0, 1.0].
+            lifecycle_status: Optional filter on lifecycle_status (default: 'ACTIVE'). If None, returns all statuses.
 
         Returns:
             List[Tuple[Experience, float]]: List of (Experience, similarity_score) tuples ordered by descending similarity.
@@ -200,11 +211,15 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
         try:
             if dialect_name == "sqlite":
                 # SQLite test environment fallback
-                stmt = select(ExperienceModel).where(
+                where_clauses = [
                     ExperienceModel.user_id == user_uuid,
                     ExperienceModel.embedding.is_not(None),
                     ExperienceModel.embedding_status == "COMPLETED",
-                )
+                ]
+                if lifecycle_status is not None:
+                    where_clauses.append(ExperienceModel.lifecycle_status == lifecycle_status)
+
+                stmt = select(ExperienceModel).where(*where_clauses)
                 res = await self._session.execute(stmt)
                 models = list(res.scalars().all())
 
@@ -241,6 +256,9 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
                     ExperienceModel.embedding.is_not(None),
                     ExperienceModel.embedding_status == "COMPLETED",
                 ]
+
+                if lifecycle_status is not None:
+                    where_clauses.append(ExperienceModel.lifecycle_status == lifecycle_status)
 
                 if threshold is not None:
                     # similarity >= threshold  <=>  (1.0 - distance) >= threshold  <=>  distance <= (1.0 - threshold)
@@ -292,6 +310,13 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             except ValueError:
                 exp_lifecycle = ExperienceLifecycle.STABLE
 
+        exp_lifecycle_status = ExperienceLifecycleStatus.ACTIVE
+        if getattr(model, "lifecycle_status", None):
+            try:
+                exp_lifecycle_status = ExperienceLifecycleStatus(model.lifecycle_status)
+            except ValueError:
+                exp_lifecycle_status = ExperienceLifecycleStatus.ACTIVE
+
         return Experience(
             id=model.id,
             user_id=str(model.user_id) if model.user_id else None,
@@ -301,6 +326,7 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             domain=model.domain,
             importance=exp_importance,
             lifecycle=exp_lifecycle,
+            lifecycle_status=exp_lifecycle_status,
             extraction_confidence=model.extraction_confidence,
             embedding=[float(x) for x in model.embedding] if model.embedding is not None else None,
             embedding_model=model.embedding_model,

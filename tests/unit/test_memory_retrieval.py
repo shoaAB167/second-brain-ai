@@ -53,6 +53,7 @@ class InMemoryExperienceRepository(ExperienceRepository):
         query_vector: List[float],
         limit: int = 5,
         threshold: Optional[float] = None,
+        lifecycle_status: Optional[str] = "ACTIVE",
     ) -> List[Tuple[Experience, float]]:
         import math
 
@@ -63,6 +64,7 @@ class InMemoryExperienceRepository(ExperienceRepository):
             if e.user_id == user_str
             and e.embedding is not None
             and e.embedding_status == "COMPLETED"
+            and (lifecycle_status is None or (e.lifecycle_status.value if hasattr(e.lifecycle_status, "value") else str(e.lifecycle_status)) == lifecycle_status)
         ]
 
         scored: List[Tuple[Experience, float, float]] = []
@@ -359,7 +361,7 @@ async def test_regression_threshold_plus_limit_interaction() -> None:
         (exp_87, 0.87),
     ]
 
-    async def mock_search_by_vector(user_id, query_vector, limit=5, threshold=None):
+    async def mock_search_by_vector(user_id, query_vector, limit=5, threshold=None, **kwargs):
         filtered = [(e, sim) for e, sim in candidates if threshold is None or sim >= threshold]
         return filtered[:limit]
 

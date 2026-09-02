@@ -143,6 +143,7 @@ class ExperienceModel(Base):
     domain: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     importance: Mapped[str] = mapped_column(String(20), nullable=False, default="MEDIUM", index=True)
     lifecycle: Mapped[str] = mapped_column(String(20), nullable=False, default="STABLE", index=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", index=True)
     extraction_confidence: Mapped[Optional[float]] = mapped_column(nullable=True)
 
     # Embedding & Vector Storage Fields (PR #10)
@@ -179,6 +180,44 @@ class ExperienceModel(Base):
     )
 
     user: Mapped[Optional[User]] = relationship("User", back_populates="experiences")
+
+
+class ExperienceRelationshipModel(Base):
+    """ORM Model representing directional typed relationships between experiences."""
+
+    __tablename__ = "experience_relationships"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    source_experience_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experiences.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    target_experience_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("experiences.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    relationship_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    confidence: Mapped[float] = mapped_column(nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_experience_rel_source_target_type",
+            "source_experience_id",
+            "target_experience_id",
+            "relationship_type",
+            unique=True,
+        ),
+    )
 
 
 class ExperienceClassificationModel(Base):

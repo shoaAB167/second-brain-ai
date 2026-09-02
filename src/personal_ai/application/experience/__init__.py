@@ -7,6 +7,11 @@ from personal_ai.application.experience.embedding_service import (
     EmbeddingResult,
     ExperienceEmbeddingService,
 )
+from personal_ai.application.experience.evolution_classifier import (
+    ExperienceEvolutionClassificationResult,
+    ExperienceEvolutionClassifier,
+)
+from personal_ai.application.experience.evolution_service import ExperienceEvolutionService
 from personal_ai.application.experience.extractor import ExperienceExtractor
 from personal_ai.application.experience.promotion import (
     DeterministicPromotionStrategy,
@@ -28,4 +33,7 @@ __all__ = [
     "DeterministicPromotionStrategy",
     "PromotionResult",
     "BackgroundExperienceProcessor",
+    "ExperienceEvolutionClassifier",
+    "ExperienceEvolutionClassificationResult",
+    "ExperienceEvolutionService",
 ]
