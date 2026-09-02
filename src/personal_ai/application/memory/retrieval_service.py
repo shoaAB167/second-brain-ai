@@ -23,6 +23,7 @@ class MemorySearchResult:
     domain: Optional[str]
     importance: Optional[str] = "MEDIUM"
     lifecycle: Optional[str] = "STABLE"
+    lifecycle_status: Optional[str] = "ACTIVE"
     status: str = "RECEIVED"
     similarity: float = 0.0
     source_message_id: Optional[uuid.UUID] = None
@@ -52,16 +53,19 @@ class MemoryRetrievalService:
         query: str,
         limit: int = 5,
         threshold: Optional[float] = None,
+        lifecycle_status: Optional[str] = "ACTIVE",
     ) -> List[MemorySearchResult]:
         """Perform semantic similarity search over the authenticated user's experiences.
 
         Enforces strict limit validation (1 <= limit <= 20) and model consistency invariants.
+        Defaults to active experiences (filtering out superseded/expired memories).
 
         Args:
             user_id: The authenticated user's UUID.
             query: Natural-language search query.
             limit: Maximum results to return (1-20, default 5).
             threshold: Optional minimum cosine similarity threshold in [-1.0, 1.0].
+            lifecycle_status: Optional lifecycle status filter (default: "ACTIVE"). Pass None for all.
 
         Returns:
             List[MemorySearchResult]: Ranked list of matching memory search results.
@@ -128,6 +132,7 @@ class MemoryRetrievalService:
             query_vector=query_vector,
             limit=limit,
             threshold=threshold,
+            lifecycle_status=lifecycle_status,
         )
 
         duration_ms = (time.perf_counter() - start_time) * 1000.0
@@ -144,6 +149,7 @@ class MemoryRetrievalService:
         for exp, similarity in scored_experiences:
             exp_imp = exp.importance.value if hasattr(exp.importance, "value") else (str(exp.importance) if exp.importance else "MEDIUM")
             exp_life = exp.lifecycle.value if hasattr(exp.lifecycle, "value") else (str(exp.lifecycle) if exp.lifecycle else "STABLE")
+            exp_life_status = exp.lifecycle_status.value if hasattr(exp.lifecycle_status, "value") else (str(exp.lifecycle_status) if exp.lifecycle_status else "ACTIVE")
             results.append(
                 MemorySearchResult(
                     experience_id=exp.id,
@@ -152,6 +158,7 @@ class MemoryRetrievalService:
                     domain=exp.domain,
                     importance=exp_imp,
                     lifecycle=exp_life,
+                    lifecycle_status=exp_life_status,
                     status=exp.status.value if hasattr(exp.status, "value") else str(exp.status),
                     similarity=round(similarity, 4),
                     source_message_id=exp.source_message_id,

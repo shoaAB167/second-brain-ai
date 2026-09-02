@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     memory_retrieval_enabled: bool = True
     memory_retrieval_limit: int = 5
 
+    # Memory Evolution Settings
+    memory_evolution_enabled: bool = True
+    memory_evolution_candidate_limit: int = 3
+    memory_evolution_similarity_threshold: float = 0.4
+    memory_evolution_supersede_confidence_threshold: float = 0.75
+    memory_evolution_min_relationship_confidence: float = 0.60
+
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(
