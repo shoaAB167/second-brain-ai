@@ -95,41 +95,56 @@ class ExperienceExtractionResult(BaseModel):
             return None
         if isinstance(value, ExperienceType):
             return value
+        if not isinstance(value, str):
+            raise ValueError(f"Type must be a valid string or ExperienceType enum, got {type(value).__name__}: {value!r}")
         val_str = str(value).upper().strip()
         if val_str in ("EMOTION", "EMOTION_STATE"):
             val_str = "STATE"
         try:
             return ExperienceType(val_str)
-        except ValueError:
-            return ExperienceType.OTHER
+        except ValueError as exc:
+            valid_values = [e.value for e in ExperienceType]
+            raise ValueError(
+                f"Invalid experience type '{value}'. Valid values are: {valid_values}"
+            ) from exc
 
     @field_validator("importance", mode="before")
     @classmethod
     def validate_importance(cls, value: Any) -> Optional[ExperienceImportance]:
-        """Validate and normalize importance."""
+        """Validate importance strictly fails closed on invalid values."""
         if value is None:
             return ExperienceImportance.MEDIUM
         if isinstance(value, ExperienceImportance):
             return value
+        if not isinstance(value, str):
+            raise ValueError(f"Importance must be a valid string or ExperienceImportance enum, got {type(value).__name__}: {value!r}")
         val_str = str(value).upper().strip()
         try:
             return ExperienceImportance(val_str)
-        except ValueError:
-            return ExperienceImportance.MEDIUM
+        except ValueError as exc:
+            valid_values = [e.value for e in ExperienceImportance]
+            raise ValueError(
+                f"Invalid experience importance '{value}'. Valid values are: {valid_values}"
+            ) from exc
 
     @field_validator("lifecycle", mode="before")
     @classmethod
     def validate_lifecycle(cls, value: Any) -> Optional[ExperienceLifecycle]:
-        """Validate and normalize lifecycle."""
+        """Validate lifecycle strictly fails closed on invalid values."""
         if value is None:
             return ExperienceLifecycle.STABLE
         if isinstance(value, ExperienceLifecycle):
             return value
+        if not isinstance(value, str):
+            raise ValueError(f"Lifecycle must be a valid string or ExperienceLifecycle enum, got {type(value).__name__}: {value!r}")
         val_str = str(value).upper().strip()
         try:
             return ExperienceLifecycle(val_str)
-        except ValueError:
-            return ExperienceLifecycle.STABLE
+        except ValueError as exc:
+            valid_values = [e.value for e in ExperienceLifecycle]
+            raise ValueError(
+                f"Invalid experience lifecycle '{value}'. Valid values are: {valid_values}"
+            ) from exc
 
     @model_validator(mode="after")
     def validate_success_consistency(self) -> "ExperienceExtractionResult":

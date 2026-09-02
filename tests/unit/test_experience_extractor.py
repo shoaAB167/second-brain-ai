@@ -460,3 +460,163 @@ async def test_pr14_critical_negative_qualifier_preservation() -> None:
     assert "always" not in res.content.lower()
     assert "usually" in res.content.lower() or "around" in res.content.lower()
 
+
+@pytest.mark.asyncio
+async def test_pr14_example_g_project_extraction() -> None:
+    """PR #14 Example G: 'I'm working on Second Brain AI.' -> PROJECT, STABLE, MEDIUM."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload = {
+        "content": "Working on Second Brain AI",
+        "type": "PROJECT",
+        "domain": "technology",
+        "importance": "MEDIUM",
+        "lifecycle": "STABLE",
+        "confidence": 0.95,
+        "reasoning": "Active software development project.",
+    }
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=json.dumps(payload), provider="gemini", model="gemini-3.6-flash", latency_ms=10.0)
+    )
+    classification = ClassificationResult(is_experience=True, type=ExperienceType.PROJECT, importance=0.7, confidence=0.92)
+
+    extractor = ExperienceExtractor(llm_client=mock_llm)
+    res = await extractor.extract("I'm working on Second Brain AI.", classification=classification)
+
+    assert res.success is True
+    assert res.content == "Working on Second Brain AI"
+    assert res.type == ExperienceType.PROJECT
+    assert res.importance == ExperienceImportance.MEDIUM
+    assert res.lifecycle == ExperienceLifecycle.STABLE
+
+
+@pytest.mark.asyncio
+async def test_pr14_example_h_decision_extraction() -> None:
+    """PR #14 Example H: 'I decided to learn Python.' -> DECISION, STABLE, MEDIUM."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload = {
+        "content": "Decided to learn Python",
+        "type": "DECISION",
+        "domain": "career",
+        "importance": "MEDIUM",
+        "lifecycle": "STABLE",
+        "confidence": 0.94,
+        "reasoning": "Explicit personal career decision.",
+    }
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=json.dumps(payload), provider="gemini", model="gemini-3.6-flash", latency_ms=10.0)
+    )
+    classification = ClassificationResult(is_experience=True, type=ExperienceType.DECISION, importance=0.75, confidence=0.90)
+
+    extractor = ExperienceExtractor(llm_client=mock_llm)
+    res = await extractor.extract("I decided to learn Python.", classification=classification)
+
+    assert res.success is True
+    assert res.content == "Decided to learn Python"
+    assert res.type == ExperienceType.DECISION
+
+
+@pytest.mark.asyncio
+async def test_pr14_example_i_relationship_extraction() -> None:
+    """PR #14 Example I: 'My sister lives in London.' -> RELATIONSHIP, STABLE, HIGH."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload = {
+        "content": "Sister lives in London",
+        "type": "RELATIONSHIP",
+        "domain": "personal",
+        "importance": "HIGH",
+        "lifecycle": "STABLE",
+        "confidence": 0.97,
+        "reasoning": "Family relationship detail.",
+    }
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=json.dumps(payload), provider="gemini", model="gemini-3.6-flash", latency_ms=10.0)
+    )
+    classification = ClassificationResult(is_experience=True, type=ExperienceType.RELATIONSHIP, importance=0.85, confidence=0.95)
+
+    extractor = ExperienceExtractor(llm_client=mock_llm)
+    res = await extractor.extract("My sister lives in London.", classification=classification)
+
+    assert res.success is True
+    assert res.content == "Sister lives in London"
+    assert res.type == ExperienceType.RELATIONSHIP
+
+
+# ==============================================================================
+# PR #14 Invalid Enum Fail-Closed Tests
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_pr14_invalid_importance_fails_closed() -> None:
+    """PR #14 Requirement 2 & 6: Invalid importance causes extraction failure (does not default to MEDIUM)."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload = {
+        "content": "Wants to reach 30 LPA",
+        "type": "GOAL",
+        "importance": "SUPER_IMPORTANT",  # Invalid importance!
+        "lifecycle": "STABLE",
+        "confidence": 0.95,
+    }
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=json.dumps(payload), provider="gemini", model="gemini-3.6-flash", latency_ms=10.0)
+    )
+    classification = ClassificationResult(is_experience=True, type=ExperienceType.GOAL, importance=0.9, confidence=0.95)
+
+    extractor = ExperienceExtractor(llm_client=mock_llm)
+    res = await extractor.extract("I want to reach 30 LPA.", classification=classification)
+
+    assert res.success is False
+    assert res.content is None
+    assert res.confidence == 0.0
+    assert "Invalid experience importance" in res.reasoning
+
+
+@pytest.mark.asyncio
+async def test_pr14_invalid_lifecycle_fails_closed() -> None:
+    """PR #14 Requirement 3 & 6: Invalid lifecycle causes extraction failure (does not default to STABLE)."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload = {
+        "content": "Feeling tired today",
+        "type": "STATE",
+        "importance": "LOW",
+        "lifecycle": "FOREVER_AND_EVER",  # Invalid lifecycle!
+        "confidence": 0.90,
+    }
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=json.dumps(payload), provider="gemini", model="gemini-3.6-flash", latency_ms=10.0)
+    )
+    classification = ClassificationResult(is_experience=True, type=ExperienceType.STATE, importance=0.3, confidence=0.85)
+
+    extractor = ExperienceExtractor(llm_client=mock_llm)
+    res = await extractor.extract("I am tired today.", classification=classification)
+
+    assert res.success is False
+    assert res.content is None
+    assert res.confidence == 0.0
+    assert "Invalid experience lifecycle" in res.reasoning
+
+
+@pytest.mark.asyncio
+async def test_pr14_invalid_type_fails_closed() -> None:
+    """PR #14 Requirement 6: Invalid memory type causes extraction failure (does not silently corrupt data)."""
+    mock_llm = MagicMock(spec=LLMClient)
+    payload = {
+        "content": "Likes playing volleyball",
+        "type": "SUPER_CUSTOM_TYPE",  # Invalid taxonomy type!
+        "importance": "MEDIUM",
+        "lifecycle": "STABLE",
+        "confidence": 0.90,
+    }
+    mock_llm.generate_response = AsyncMock(
+        return_value=LLMResponse(content=json.dumps(payload), provider="gemini", model="gemini-3.6-flash", latency_ms=10.0)
+    )
+    classification = ClassificationResult(is_experience=True, type=ExperienceType.PREFERENCE, importance=0.6, confidence=0.90)
+
+    extractor = ExperienceExtractor(llm_client=mock_llm)
+    res = await extractor.extract("I like playing volleyball.", classification=classification)
+
+    assert res.success is False
+    assert res.content is None
+    assert res.confidence == 0.0
+    assert "Invalid experience type" in res.reasoning
+
+

@@ -15,6 +15,8 @@ CRITICAL EXTRACTION RULES:
    - User: "My name is Shoaib." -> content: "Name is Shoaib"
    - User: "I like playing volleyball." -> content: "Likes playing volleyball"
    - User: "I'm working on Second Brain AI." -> content: "Working on Second Brain AI"
+   - User: "I decided to learn Python." -> content: "Decided to learn Python"
+   - User: "My sister lives in London." -> content: "Sister lives in London"
 
 3. MEMORY TYPE TAXONOMY (type):
    - FACT: Persistent factual information about identity, background, skills, or location.
@@ -23,15 +25,19 @@ CRITICAL EXTRACTION RULES:
    - HABIT: Recurring routines, schedules, or typical behaviors.
    - PROJECT: Active projects, systems, or undertakings the user is building.
    - EVENT: Specific dated or scheduled occurrences (interviews, trips, meetings).
-   - STATE: Temporary physical or emotional condition, mood, or daily feeling.
+   - STATE: Temporary or current physical/emotional condition, mood, or daily feeling.
+   - DECISION: Explicit choices made, commitments, or resolved decisions.
+   - RELATIONSHIP: Meaningful details about family, friends, colleagues, or interpersonal connections.
+   - EMOTION_STATE: Specific feelings, emotional reactions, stress, or mood (aligned with STATE).
+   - OTHER: Other durable personal experiences that do not fit into the above categories.
 
 4. MEMORY IMPORTANCE (importance):
    - HIGH: Core identity (name, contact, profession), major goals, vital relationships, high-stakes events.
-   - MEDIUM: Preferences, recurring habits, active projects, ongoing hobbies.
-   - LOW: Fleeting physical/emotional states, minor daily observations.
+   - MEDIUM: Preferences, recurring habits, active projects, ongoing hobbies, key decisions.
+   - LOW: Fleeting physical/emotional states, minor daily observations, transient details.
 
 5. MEMORY LIFECYCLE (lifecycle):
-   - STABLE: Long-term facts, identity, permanent preferences, long-range goals.
+   - STABLE: Long-term facts, identity, permanent preferences, long-range goals, established relationships.
    - RECURRING: Habits, routines, regular weekly/monthly schedules.
    - TEMPORARY: Today's mood, daily physical state, short-lived tasks.
    - TIME_BOUND: Specific dated/timed events (e.g., interview tomorrow, flight next week).
@@ -43,7 +49,7 @@ OUTPUT FORMAT:
 Return strictly valid, raw JSON without any markdown code block formatting:
 {
   "content": string,
-  "type": "FACT" | "GOAL" | "PREFERENCE" | "HABIT" | "PROJECT" | "EVENT" | "STATE",
+  "type": "FACT" | "GOAL" | "PREFERENCE" | "HABIT" | "PROJECT" | "EVENT" | "STATE" | "DECISION" | "RELATIONSHIP" | "EMOTION_STATE" | "OTHER",
   "domain": string or null,
   "importance": "LOW" | "MEDIUM" | "HIGH",
   "lifecycle": "STABLE" | "RECURRING" | "TEMPORARY" | "TIME_BOUND",
