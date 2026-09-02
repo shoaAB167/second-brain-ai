@@ -90,14 +90,22 @@ class LiteLLMClient(LLMClient):
         return f"{self._provider}/{self._model}"
 
     def _is_transient_error(self, exc: Exception) -> bool:
-        """Determine if an exception represents a transient failure eligible for retry."""
+        """Determine if an exception represents a transient failure eligible for retry.
+
+        Classification priority:
+        1. Explicit LiteLLM / standard exception types (including MidStreamFallbackError)
+        2. HTTP/status code (500, 502, 503, 504)
+        3. String matching as a fallback for vendor/beta exceptions
+        """
         if isinstance(exc, (AuthenticationError,)):
             return False
 
+        # 1. Explicit LiteLLM / standard exception types
         if isinstance(
             exc,
             (
                 ServiceUnavailableError,
+                MidStreamFallbackError,
                 BadGatewayError,
                 InternalServerError,
                 APIConnectionError,
@@ -107,10 +115,18 @@ class LiteLLMClient(LLMClient):
         ):
             return True
 
-        status_code = getattr(exc, "status_code", None)
+        # 2. HTTP status code check
+        status_code = getattr(exc, "status_code", None) or getattr(exc, "http_status", None)
         if status_code in (500, 502, 503, 504):
             return True
 
+        # Check wrapped original exception if available
+        orig_exc = getattr(exc, "original_exception", None)
+        if orig_exc is not None and isinstance(orig_exc, Exception):
+            if self._is_transient_error(orig_exc):
+                return True
+
+        # 3. Fallback string matching for vendor/beta errors (e.g. Vertex_ai_betaException)
         exc_str = str(exc).lower()
         transient_indicators = [
             "503",
@@ -125,7 +141,6 @@ class LiteLLMClient(LLMClient):
             "connection reset",
             "timeout",
             "timed out",
-            "midstreamfallbackerror",
         ]
         return any(indicator in exc_str for indicator in transient_indicators)
 
@@ -152,13 +167,18 @@ class LiteLLMClient(LLMClient):
                 details={"provider": self._provider, "model": self._model, "reason": "timeout"},
             )
 
-        if isinstance(exc, ServiceUnavailableError) or "503" in str(exc) or "high demand" in str(exc).lower() or "serviceunavailable" in str(exc).lower():
+        if (
+            isinstance(exc, (ServiceUnavailableError, MidStreamFallbackError))
+            or "503" in str(exc)
+            or "high demand" in str(exc).lower()
+            or "serviceunavailable" in str(exc).lower()
+        ):
             return LLMServiceUnavailableException(
                 message="AI service is temporarily unavailable. Please try again.",
                 details={"provider": self._provider, "model": self._model, "reason": "service_unavailable"},
             )
 
-        if isinstance(exc, (APIConnectionError, BadGatewayError, InternalServerError, MidStreamFallbackError)) or "connection" in str(exc).lower():
+        if isinstance(exc, (APIConnectionError, BadGatewayError, InternalServerError)) or "connection" in str(exc).lower():
             return LLMConnectionException(
                 message="AI service is temporarily unavailable. Please try again.",
                 details={"provider": self._provider, "model": self._model},

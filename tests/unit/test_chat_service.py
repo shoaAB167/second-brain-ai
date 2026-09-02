@@ -302,3 +302,40 @@ async def test_chat_service_streaming_503_connection_error_emits_sse_error(
     assert len(messages) == 1
     assert messages[0].role == MessageRole.USER
     assert messages[0].content == "503 stream prompt"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_streaming_mid_stream_chunk_timeout_emits_error_and_does_not_persist_assistant(
+    db_session: AsyncSession,
+) -> None:
+    """Verify mid-stream timeout emits token chunks then error event, and does NOT persist partial assistant message."""
+    from personal_ai.llm.exceptions import LLMTimeoutException
+
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
+    conversation = await repo.create_conversation()
+
+    async def mock_partial_then_timeout(*args, **kwargs):
+        yield LLMStreamChunk(content="Partial before timeout")
+        raise LLMTimeoutException("AI service is temporarily unavailable. Please try again.")
+
+    mock_llm_client = MagicMock(spec=LLMClient)
+    mock_llm_client.stream_response = MagicMock(side_effect=mock_partial_then_timeout)
+
+    service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
+    events = [
+        event
+        async for event in service.process_chat_stream(
+            ChatRequest(conversation_id=conversation.id, message="Timeout prompt")
+        )
+    ]
+
+    assert len(events) == 2
+    assert 'data: {"type":"token","content":"Partial before timeout"}' in events[0]
+    assert '"type":"error"' in events[1]
+    assert "AI service is temporarily unavailable. Please try again." in events[1]
+
+    # Verify DB persistence: User message is preserved, but NO assistant message was saved
+    messages = await repo.get_conversation_messages(conversation.id)
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.USER
+    assert messages[0].content == "Timeout prompt"

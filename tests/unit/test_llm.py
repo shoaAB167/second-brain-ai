@@ -439,3 +439,101 @@ async def test_clean_exception_mapping_vertex_beta() -> None:
         assert "AI service is temporarily unavailable" in exc_info.value.message
         # Ensure internal vertex beta exception details are sanitized
         assert "Vertex_ai_betaException" not in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_stream_response_mid_stream_chunk_timeout() -> None:
+    """Verify stream chunk timeout terminates mid-stream hang after yielding initial chunks."""
+    class MockHangingStream:
+        def __init__(self):
+            self.step = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            self.step += 1
+            if self.step == 1:
+                chunk = MagicMock()
+                chunk.choices = [MagicMock(delta=MagicMock(content="First"), finish_reason=None)]
+                chunk.usage = None
+                return chunk
+            elif self.step == 2:
+                chunk = MagicMock()
+                chunk.choices = [MagicMock(delta=MagicMock(content=" Second"), finish_reason=None)]
+                chunk.usage = None
+                return chunk
+            else:
+                # 3rd chunk hangs indefinitely
+                await asyncio.sleep(2.0)
+                chunk = MagicMock()
+                chunk.choices = [MagicMock(delta=MagicMock(content=" Third"), finish_reason="stop")]
+                chunk.usage = None
+                return chunk
+
+    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
+        mock_acompletion.return_value = MockHangingStream()
+
+        settings = Settings(
+            llm_provider="gemini",
+            llm_model="gemini-3.6-flash",
+            llm_stream_start_timeout=1.0,
+            llm_stream_chunk_timeout=0.05,  # 50ms chunk timeout
+        )
+        client = LiteLLMClient(settings=settings)
+        messages = [LLMMessage(role="user", content="Hello")]
+
+        stream_gen = client.stream_response(messages=messages)
+        yielded_chunks = []
+
+        start_time = time.perf_counter()
+        with pytest.raises(LLMConnectionException) as exc_info:
+            async for c in stream_gen:
+                yielded_chunks.append(c.content)
+
+        elapsed = time.perf_counter() - start_time
+
+        # Initial 2 chunks were received
+        assert yielded_chunks == ["First", " Second"]
+        # Timed out quickly on 3rd chunk (< 0.2s instead of hanging for 2.0s)
+        assert elapsed < 0.2
+        assert "AI service is temporarily unavailable" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_midstream_fallback_error_retry_stream_start() -> None:
+    """Verify MidStreamFallbackError is treated as transient and retried during stream start."""
+    import litellm
+
+    chunk = MagicMock()
+    chunk.choices = [MagicMock(delta=MagicMock(content="Success after fallback"), finish_reason="stop")]
+    chunk.usage = None
+
+    mock_stream = MockAsyncStream([chunk])
+
+    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
+        mock_acompletion.side_effect = [
+            litellm.exceptions.MidStreamFallbackError(
+                message="MidStreamFallbackError: Vertex AI 503 high demand",
+                llm_provider="gemini",
+                model="gemini-3.6-flash",
+            ),
+            mock_stream,
+        ]
+
+        settings = Settings(
+            llm_provider="gemini",
+            llm_model="gemini-3.6-flash",
+            llm_max_retries=2,
+            llm_retry_initial_delay=0.01,
+        )
+        client = LiteLLMClient(settings=settings)
+        messages = [LLMMessage(role="user", content="Hello")]
+
+        stream_gen = client.stream_response(messages=messages)
+        chunks = [c async for c in stream_gen]
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "Success after fallback"
+        assert mock_acompletion.call_count == 2
+
