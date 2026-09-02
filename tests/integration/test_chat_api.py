@@ -177,3 +177,29 @@ def test_post_chat_stream_returns_text_event_stream() -> None:
     assert 'data: {"type":"token","content":" streaming"}' in body
     assert '"type":"done"' in body
     assert '"conversation_id"' in body
+
+
+def test_post_chat_stream_failure_returns_sse_error_event() -> None:
+    """PR #15: Verify stream failure returns 200 text/event-stream with a clean SSE error event."""
+    from personal_ai.llm.exceptions import LLMConnectionException
+
+    _, token = create_real_test_user(email="streamerruser@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async def mock_failed_stream(*args, **kwargs):
+        raise LLMConnectionException("AI service is temporarily unavailable. Please try again.")
+        yield LLMStreamChunk(content="Never reached")  # type: ignore
+
+    mock_llm_client = MagicMock(spec=LLMClient)
+    mock_llm_client.stream_response = MagicMock(side_effect=mock_failed_stream)
+    app.dependency_overrides[get_llm_client] = lambda: mock_llm_client
+
+    payload = {"message": "Stream that will fail"}
+    response = client.post("/api/v1/chat/stream", json=payload, headers=headers)
+
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+
+    body = response.text
+    assert '"type":"error"' in body
+    assert "AI service is temporarily unavailable. Please try again." in body

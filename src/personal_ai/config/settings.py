@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     openrouter_api_key: Optional[str] = None
     ollama_api_base: Optional[str] = "http://localhost:11434"
 
+    # LLM Resilience Settings
+    llm_request_timeout: float = 30.0
+    llm_stream_start_timeout: float = 30.0
+    llm_stream_chunk_timeout: float = 30.0
+    llm_max_retries: int = 2
+    llm_retry_initial_delay: float = 1.0
+    llm_retry_backoff_factor: float = 2.0
+    llm_retry_max_delay: float = 4.0
+
     # Database Settings
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/second_brain_ai"
 

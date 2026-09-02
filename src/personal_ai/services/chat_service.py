@@ -286,13 +286,14 @@ class ChatService:
                         content=chunk.content,
                     ).to_sse()
 
-            # Stream completed successfully: persist exactly ONE assistant message
+            # Stream completed successfully: persist exactly ONE assistant message if non-empty
             full_response_text = "".join(accumulated_chunks)
-            await self._conversation_repo.add_message(
-                conversation_id=conv_id,
-                role="assistant",
-                content=full_response_text,
-            )
+            if full_response_text.strip():
+                await self._conversation_repo.add_message(
+                    conversation_id=conv_id,
+                    role="assistant",
+                    content=full_response_text,
+                )
 
             # Emit done event containing conversation_id
             yield ChatStreamEvent(
@@ -340,6 +341,6 @@ class ChatService:
             logger.error("Unexpected runtime error during chat stream [conversation_id=%s]: %s", conv_id, exc)
             yield ChatStreamEvent(
                 type=StreamEventType.ERROR,
-                message="An unexpected error occurred during chat streaming.",
+                message="AI service is temporarily unavailable. Please try again.",
                 conversation_id=conv_id,
             ).to_sse()
