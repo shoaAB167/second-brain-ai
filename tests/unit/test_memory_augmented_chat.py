@@ -439,3 +439,110 @@ async def test_db_failure_in_retrieval_leaves_session_usable_for_chat() -> None:
 
     await engine.dispose()
 
+
+@pytest.mark.asyncio
+async def test_personal_name_memory_retrieval_flow() -> None:
+    """Test 8: 'My name is Shoaib' memory is retrieved and injected when asking 'What is my name?'."""
+    user_id = uuid.uuid4()
+    mock_llm = MagicMock(spec=LLMClient)
+    captured_messages: List[LLMMessage] = []
+
+    async def fake_generate(messages: List[LLMMessage], **kwargs) -> LLMResponse:
+        nonlocal captured_messages
+        captured_messages = list(messages)
+        return LLMResponse(
+            content="Your name is Shoaib.",
+            provider="gemini",
+            model="gemini-3.5-flash",
+            latency_ms=12.0,
+        )
+
+    mock_llm.generate_response = AsyncMock(side_effect=fake_generate)
+    conv_repo = MockConversationRepository()
+
+    name_memory = MemorySearchResult(
+        experience_id=uuid.uuid4(),
+        type="IDENTITY",
+        domain="personal",
+        content="My name is Shoaib.",
+        status="RECEIVED",
+        similarity=0.96,
+        source_message_id=uuid.uuid4(),
+        created_at=datetime.now(timezone.utc),
+    )
+
+    mock_retrieval = MagicMock(spec=MemoryRetrievalService)
+    mock_retrieval.search = AsyncMock(return_value=[name_memory])
+
+    service = ChatService(
+        llm_client=mock_llm,
+        conversation_repo=conv_repo,
+        retrieval_service=mock_retrieval,
+    )
+
+    # Conversation 2: Ask "What is my name?"
+    req = ChatRequest(message="What is my name?")
+    res = await service.process_chat(req, user_id=user_id)
+
+    assert "Shoaib" in res.response
+    mock_retrieval.search.assert_awaited_once_with(
+        user_id=user_id,
+        query="What is my name?",
+        limit=5,
+    )
+
+    # Verify LLM received personal identity in <user_memory>
+    assert len(captured_messages) >= 2
+    system_prompt = captured_messages[0].content
+    assert "<user_memory>" in system_prompt
+    assert "My name is Shoaib." in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_strict_user_isolation_between_users() -> None:
+    """Test 9: User B cannot retrieve User A's identity memory."""
+    user_a = uuid.uuid4()
+    user_b = uuid.uuid4()
+
+    mock_llm = MagicMock(spec=LLMClient)
+    captured_messages_b: List[LLMMessage] = []
+
+    async def fake_generate(messages: List[LLMMessage], **kwargs) -> LLMResponse:
+        nonlocal captured_messages_b
+        captured_messages_b = list(messages)
+        return LLMResponse(
+            content="I don't know your name yet.",
+            provider="gemini",
+            model="gemini-3.5-flash",
+            latency_ms=10.0,
+        )
+
+    mock_llm.generate_response = AsyncMock(side_effect=fake_generate)
+    conv_repo = MockConversationRepository()
+
+    # When User B searches, return empty list (User A's memory is isolated)
+    mock_retrieval = MagicMock(spec=MemoryRetrievalService)
+    mock_retrieval.search = AsyncMock(return_value=[])
+
+    service = ChatService(
+        llm_client=mock_llm,
+        conversation_repo=conv_repo,
+        retrieval_service=mock_retrieval,
+    )
+
+    req = ChatRequest(message="What is my name?")
+    res = await service.process_chat(req, user_id=user_b)
+
+    assert res.response == "I don't know your name yet."
+    mock_retrieval.search.assert_awaited_once_with(
+        user_id=user_b,
+        query="What is my name?",
+        limit=5,
+    )
+
+    # System prompt for User B must not contain User A's name
+    for msg in captured_messages_b:
+        assert "Shoaib" not in msg.content
+        assert "<user_memory>" not in msg.content
+
+

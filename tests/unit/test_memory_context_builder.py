@@ -34,6 +34,8 @@ def test_b_single_memory_formatting() -> None:
     assert "1." in context
     assert "Type: GOAL" in context
     assert "Domain: career" in context
+    assert "Importance: MEDIUM" in context
+    assert "Lifecycle: STABLE" in context
     assert "Content: Reach a salary of 30 LPA" in context
 
 

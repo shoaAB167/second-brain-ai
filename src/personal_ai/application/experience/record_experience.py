@@ -4,6 +4,8 @@ import uuid
 from personal_ai.core.exceptions import AppException
 from personal_ai.domain.experience import (
     Experience,
+    ExperienceImportance,
+    ExperienceLifecycle,
     ExperienceRepository,
     ExperienceSource,
     ExperienceStatus,
@@ -36,6 +38,8 @@ class RecordExperience:
         source_message_id: Optional[uuid.UUID] = None,
         type: Optional[Union[ExperienceType, str]] = None,
         domain: Optional[str] = None,
+        importance: Optional[Union[ExperienceImportance, str]] = None,
+        lifecycle: Optional[Union[ExperienceLifecycle, str]] = None,
         extraction_confidence: Optional[float] = None,
     ) -> Experience:
         """Execute the RecordExperience use case.
@@ -47,6 +51,8 @@ class RecordExperience:
             source_message_id: Optional UUID of the originating user Message.
             type: Optional ExperienceType or category string.
             domain: Optional categorical domain string.
+            importance: Optional ExperienceImportance (LOW, MEDIUM, HIGH).
+            lifecycle: Optional ExperienceLifecycle (STABLE, RECURRING, TEMPORARY, TIME_BOUND).
             extraction_confidence: Optional extractor confidence float score.
 
         Returns:
@@ -81,6 +87,8 @@ class RecordExperience:
                 source_message_id=source_message_id,
                 type=type,
                 domain=domain,
+                importance=importance or ExperienceImportance.MEDIUM,
+                lifecycle=lifecycle or ExperienceLifecycle.STABLE,
                 extraction_confidence=extraction_confidence,
                 status=ExperienceStatus.RECEIVED,
             )

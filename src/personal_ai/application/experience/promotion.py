@@ -13,6 +13,8 @@ from personal_ai.domain.experience import (
     ClassificationResult,
     Experience,
     ExperienceExtractionResult,
+    ExperienceImportance,
+    ExperienceLifecycle,
     ExperienceRepository,
     ExperienceSource,
 )
@@ -158,14 +160,18 @@ class ExperiencePromotionService:
                 return PromotionResult(promoted=False)
 
             target_content = extraction_res.content
+            target_type = extraction_res.type or (classification_res.type if classification_res else None)
             target_domain = extraction_res.domain
+            target_importance = extraction_res.importance or ExperienceImportance.MEDIUM
+            target_lifecycle = extraction_res.lifecycle or ExperienceLifecycle.STABLE
             target_confidence = extraction_res.confidence
         else:
             target_content = message.content
+            target_type = classification_res.type if classification_res else None
             target_domain = None
+            target_importance = ExperienceImportance.MEDIUM
+            target_lifecycle = ExperienceLifecycle.STABLE
             target_confidence = None
-
-        target_type = classification_res.type if classification_res else None
 
         try:
             experience = await self._record_experience.execute(
@@ -175,6 +181,8 @@ class ExperiencePromotionService:
                 source_message_id=message.id,
                 type=target_type,
                 domain=target_domain,
+                importance=target_importance,
+                lifecycle=target_lifecycle,
                 extraction_confidence=target_confidence,
             )
         except Exception:

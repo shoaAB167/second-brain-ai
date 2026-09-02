@@ -50,6 +50,7 @@ export function AuthProvider({ children }) {
     setUserEmail(null);
     localStorage.removeItem("sb_auth_token");
     localStorage.removeItem("sb_auth_user_email");
+    localStorage.removeItem("second_brain_conversation_id");
   };
 
   const openAuthModal = () => {
@@ -83,10 +84,6 @@ export function AuthProvider({ children }) {
   );
 }
 
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
-}
+export { useAuth } from "../hooks/useAuth";
+export { AuthContext };
+

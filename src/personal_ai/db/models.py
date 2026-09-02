@@ -141,6 +141,8 @@ class ExperienceModel(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
     domain: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    importance: Mapped[str] = mapped_column(String(20), nullable=False, default="MEDIUM", index=True)
+    lifecycle: Mapped[str] = mapped_column(String(20), nullable=False, default="STABLE", index=True)
     extraction_confidence: Mapped[Optional[float]] = mapped_column(nullable=True)
 
     # Embedding & Vector Storage Fields (PR #10)

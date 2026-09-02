@@ -109,7 +109,10 @@ class ExperienceExtractor:
             result = ExperienceExtractionResult(
                 success=True,
                 content=data.get("content"),
+                type=data.get("type") or classification.type,
                 domain=data.get("domain"),
+                importance=data.get("importance"),
+                lifecycle=data.get("lifecycle"),
                 status=data.get("status", "active"),
                 confidence=data.get("confidence"),
                 reasoning=data.get("reasoning"),

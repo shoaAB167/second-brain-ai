@@ -15,6 +15,8 @@ from personal_ai.domain.experience import (
     ClassificationResult,
     Experience,
     ExperienceExtractionResult,
+    ExperienceImportance,
+    ExperienceLifecycle,
     ExperienceRepository,
     ExperienceSource,
     ExperienceStatus,
@@ -84,6 +86,8 @@ async def test_experience_promotion_service_promotes_user_message_when_extractio
         source_message_id=msg_id,
         type=None,
         domain=None,
+        importance=ExperienceImportance.MEDIUM,
+        lifecycle=ExperienceLifecycle.STABLE,
         extraction_confidence=None,
     )
 
@@ -145,6 +149,8 @@ async def test_extraction_succeeds_creates_experience_with_structured_content_an
         source_message_id=msg_id,
         type=ExperienceType.GOAL,  # Canonical classifier type preserved!
         domain="career",
+        importance=ExperienceImportance.MEDIUM,
+        lifecycle=ExperienceLifecycle.STABLE,
         extraction_confidence=0.95,
     )
 

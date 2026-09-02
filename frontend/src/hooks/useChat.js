@@ -15,8 +15,19 @@ export function useChat() {
   const abortControllerRef = useRef(null);
   const requestIdRef = useRef(0);
 
-  // Restore conversation_id from localStorage on mount
+  // Restore conversation_id from localStorage on mount if authenticated
   useEffect(() => {
+    if (!token) {
+      setMessages([]);
+      setConversationId(null);
+      try {
+        localStorage.removeItem(LOCAL_STORAGE_KEY);
+      } catch {
+        // Ignore storage errors
+      }
+      return;
+    }
+
     try {
       const savedId = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (savedId) {
@@ -25,7 +36,7 @@ export function useChat() {
     } catch {
       // Ignore storage errors safely
     }
-  }, []);
+  }, [token]);
 
   const startNewChat = useCallback(() => {
     requestIdRef.current++;
