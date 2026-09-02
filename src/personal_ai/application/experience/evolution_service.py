@@ -5,6 +5,7 @@ from personal_ai.application.experience.evolution_classifier import (
     ExperienceEvolutionClassificationResult,
     ExperienceEvolutionClassifier,
 )
+from personal_ai.config.settings import get_settings
 from personal_ai.core.logger import get_logger
 from personal_ai.domain.experience.entity import Experience
 from personal_ai.domain.experience.enums import (
@@ -28,23 +29,46 @@ class ExperienceEvolutionService:
         experience_repo: ExperienceRepository,
         relationship_repo: ExperienceRelationshipRepository,
         classifier: ExperienceEvolutionClassifier,
-        candidate_similarity_threshold: float = 0.4,
-        supersede_confidence_threshold: float = 0.75,
+        candidate_limit: Optional[int] = None,
+        candidate_similarity_threshold: Optional[float] = None,
+        supersede_confidence_threshold: Optional[float] = None,
+        min_relationship_confidence: Optional[float] = None,
     ) -> None:
         """Initialize ExperienceEvolutionService.
 
         Args:
             experience_repo: Repository for experience persistence.
             relationship_repo: Repository for relationship persistence.
-            classifier: LLM-backed evolution classifier.
-            candidate_similarity_threshold: Semantic similarity threshold to fetch candidate memories (default: 0.4).
-            supersede_confidence_threshold: Minimum classifier confidence to trigger a SUPERSEDED transition (default: 0.75).
+            classifier: LLM-backed batch evolution classifier.
+            candidate_limit: Maximum candidate memories to retrieve (default from settings or 3).
+            candidate_similarity_threshold: Semantic similarity threshold to fetch candidates (default from settings or 0.4).
+            supersede_confidence_threshold: Minimum classifier confidence to trigger a SUPERSEDED transition (default from settings or 0.75).
+            min_relationship_confidence: Minimum classifier confidence to persist a relationship (default from settings or 0.60).
         """
+        settings = get_settings()
         self._experience_repo = experience_repo
         self._relationship_repo = relationship_repo
         self._classifier = classifier
-        self._candidate_similarity_threshold = candidate_similarity_threshold
-        self._supersede_confidence_threshold = supersede_confidence_threshold
+        self._candidate_limit = (
+            candidate_limit
+            if candidate_limit is not None
+            else getattr(settings, "memory_evolution_candidate_limit", 3)
+        )
+        self._candidate_similarity_threshold = (
+            candidate_similarity_threshold
+            if candidate_similarity_threshold is not None
+            else getattr(settings, "memory_evolution_similarity_threshold", 0.4)
+        )
+        self._supersede_confidence_threshold = (
+            supersede_confidence_threshold
+            if supersede_confidence_threshold is not None
+            else getattr(settings, "memory_evolution_supersede_confidence_threshold", 0.75)
+        )
+        self._min_relationship_confidence = (
+            min_relationship_confidence
+            if min_relationship_confidence is not None
+            else getattr(settings, "memory_evolution_min_relationship_confidence", 0.60)
+        )
 
     async def evolve_experience(
         self,
@@ -54,6 +78,7 @@ class ExperienceEvolutionService:
         """Analyze a newly recorded experience against existing memories and apply evolution rules.
 
         Strictly user-scoped at the repository layer.
+        Performs 0 LLM calls if 0 candidates are found, and exactly 1 batch LLM call for 1–N candidates.
         Does not mutate the incoming experience's lifecycle status (remains ACTIVE).
         Conserves old memories (never deletes).
 
@@ -72,16 +97,18 @@ class ExperienceEvolutionService:
             return []
 
         logger.info(
-            "Experience evolution started [experience_id=%s, user_id=%s]",
+            "Experience evolution started [experience_id=%s, user_id=%s, candidate_limit=%d, threshold=%.2f]",
             experience.id,
             user_id,
+            self._candidate_limit,
+            self._candidate_similarity_threshold,
         )
 
-        # 1. Fetch relevant existing candidate experiences for this user
+        # 1. Fetch relevant existing candidate experiences for this user (strictly user-scoped)
         candidates_with_score = await self._experience_repo.search_by_vector(
             user_id=user_id,
             query_vector=experience.embedding,
-            limit=5,
+            limit=self._candidate_limit,
             threshold=self._candidate_similarity_threshold,
             lifecycle_status=None,  # Search all candidates to link historical/active memories
         )
@@ -89,38 +116,48 @@ class ExperienceEvolutionService:
         # Exclude self-comparison
         candidates = [c for c, _ in candidates_with_score if c.id != experience.id]
 
+        # Requirement 4: 0 candidates -> 0 LLM calls
+        if not candidates:
+            logger.info(
+                "No candidate memories found for evolution [experience_id=%s]",
+                experience.id,
+            )
+            return []
+
         logger.info(
-            "Found %d evolution candidate experiences [experience_id=%s]",
+            "Found %d candidate memories for batch evolution classification [experience_id=%s]",
             len(candidates),
             experience.id,
         )
 
+        # Requirement 4 & 5: Exactly ONE batch LLM call for all candidates
+        classifications = await self._classifier.classify_relationships(
+            new_experience=experience,
+            candidate_experiences=candidates,
+        )
+
         created_relationships: List[ExperienceRelationship] = []
 
-        # 2. Compare against each candidate
+        # Process each candidate's classification
         for candidate in candidates:
+            classification: Optional[ExperienceEvolutionClassificationResult] = classifications.get(candidate.id)
+            if not classification:
+                continue
+
+            if (
+                classification.relationship == ExperienceRelationshipType.UNRELATED
+                or classification.confidence < self._min_relationship_confidence
+            ):
+                continue
+
+            # Prevent duplicate relationships
             try:
-                classification: ExperienceEvolutionClassificationResult = (
-                    await self._classifier.classify_relationship(
-                        new_experience=experience,
-                        existing_experience=candidate,
-                    )
-                )
-
-                if (
-                    classification.relationship == ExperienceRelationshipType.UNRELATED
-                    or classification.confidence < 0.6
-                ):
-                    continue
-
-                # 3. Prevent duplicate relationships
                 already_exists = await self._relationship_repo.exists(
                     source_id=experience.id,
                     target_id=candidate.id,
                     relationship_type=classification.relationship,
                 )
 
-                rel: Optional[ExperienceRelationship] = None
                 if not already_exists:
                     rel = ExperienceRelationship(
                         source_experience_id=experience.id,
@@ -140,11 +177,8 @@ class ExperienceEvolutionService:
                         classification.confidence,
                     )
 
-                # 4. Apply conservative lifecycle transitions
-                if classification.relationship in (
-                    ExperienceRelationshipType.UPDATES,
-                    ExperienceRelationshipType.SUPERSEDES,
-                ):
+                # Apply conservative lifecycle transitions
+                if classification.relationship == ExperienceRelationshipType.UPDATES:
                     if classification.confidence >= self._supersede_confidence_threshold:
                         if candidate.lifecycle_status == ExperienceLifecycleStatus.ACTIVE:
                             old_status = candidate.lifecycle_status
@@ -179,7 +213,7 @@ class ExperienceEvolutionService:
 
             except Exception as candidate_exc:
                 logger.warning(
-                    "Error during candidate evolution analysis [new_id=%s, candidate_id=%s]: %s",
+                    "Error during candidate evolution persistence [new_id=%s, candidate_id=%s]: %s",
                     experience.id,
                     candidate.id,
                     candidate_exc,
