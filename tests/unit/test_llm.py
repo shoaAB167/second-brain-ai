@@ -1,3 +1,5 @@
+import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -235,3 +237,205 @@ async def test_acceptance_zero_code_change_provider_switch() -> None:
         res3 = await client_3.generate_response(messages)
         assert res3.provider == "ollama"
         assert mock_3.call_args.kwargs["model"] == "ollama/llama3"
+
+
+# ==============================================================================
+# PR #15 Resilience Tests: Timeouts, Retries, and Exception Mapping
+# ==============================================================================
+
+class MockAsyncStream:
+    """Helper to mock an asynchronous stream of LiteLLM chunks."""
+
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    def __aiter__(self):
+        self._iter = iter(self._chunks)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iter)
+        except StopIteration:
+            raise StopAsyncIteration
+
+
+@pytest.mark.asyncio
+async def test_stream_response_503_retry_success() -> None:
+    """Verify transient 503 ServiceUnavailableError before first token is retried and succeeds."""
+    import litellm
+
+    chunk = MagicMock()
+    chunk.choices = [MagicMock(delta=MagicMock(content="Retried success"), finish_reason="stop")]
+    chunk.usage = None
+
+    mock_stream = MockAsyncStream([chunk])
+
+    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
+        # Attempt 1 raises 503, Attempt 2 returns valid stream
+        mock_acompletion.side_effect = [
+            litellm.exceptions.ServiceUnavailableError(
+                message="This model is currently experiencing high demand",
+                response=MagicMock(),
+                llm_provider="gemini",
+                model="gemini-3.6-flash",
+            ),
+            mock_stream,
+        ]
+
+        settings = Settings(
+            llm_provider="gemini",
+            llm_model="gemini-3.6-flash",
+            llm_max_retries=2,
+            llm_retry_initial_delay=0.01,  # fast backoff for test
+        )
+        client = LiteLLMClient(settings=settings)
+        messages = [LLMMessage(role="user", content="Hello")]
+
+        stream_gen = client.stream_response(messages=messages)
+        chunks = [c async for c in stream_gen]
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "Retried success"
+        assert mock_acompletion.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_response_repeated_503_eventually_fails() -> None:
+    """Verify persistent 503 eventually fails after bounded retries and raises LLMConnectionException."""
+    import litellm
+
+    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
+        mock_acompletion.side_effect = litellm.exceptions.ServiceUnavailableError(
+            message="503 This model is currently experiencing high demand",
+            response=MagicMock(),
+            llm_provider="gemini",
+            model="gemini-3.6-flash",
+        )
+
+        settings = Settings(
+            llm_provider="gemini",
+            llm_model="gemini-3.6-flash",
+            llm_max_retries=2,
+            llm_retry_initial_delay=0.01,
+        )
+        client = LiteLLMClient(settings=settings)
+        messages = [LLMMessage(role="user", content="Hello")]
+
+        with pytest.raises(LLMConnectionException) as exc_info:
+            stream_gen = client.stream_response(messages=messages)
+            _ = [c async for c in stream_gen]
+
+        assert exc_info.value.status_code == 503
+        assert "AI service is temporarily unavailable" in exc_info.value.message
+        # Attempt 1 + 2 retries = 3 total attempts
+        assert mock_acompletion.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_stream_response_timeout_bounded() -> None:
+    """Verify stream start timeout triggers bounded failure and raises LLMConnectionException."""
+    async def slow_stream(*args, **kwargs):
+        await asyncio.sleep(0.5)
+        return MagicMock()
+
+    with patch("litellm.acompletion", side_effect=slow_stream):
+        settings = Settings(
+            llm_provider="gemini",
+            llm_model="gemini-3.6-flash",
+            llm_stream_start_timeout=0.05,  # short timeout for test
+            llm_max_retries=1,
+            llm_retry_initial_delay=0.01,
+        )
+        client = LiteLLMClient(settings=settings)
+        messages = [LLMMessage(role="user", content="Hello")]
+
+        start_time = time.perf_counter()
+        with pytest.raises(LLMConnectionException) as exc_info:
+            stream_gen = client.stream_response(messages=messages)
+            _ = [c async for c in stream_gen]
+        elapsed = time.perf_counter() - start_time
+
+        assert elapsed < 0.3  # Bounded execution, fails fast
+        assert "AI service is temporarily unavailable" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_generate_response_503_retry_success() -> None:
+    """Verify synchronous generate_response retries transient 503 and returns LLMResponse."""
+    import litellm
+
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content="Success after retry"))]
+    mock_response.usage = None
+
+    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
+        mock_acompletion.side_effect = [
+            litellm.exceptions.ServiceUnavailableError(
+                message="503 Service Unavailable",
+                response=MagicMock(),
+                llm_provider="gemini",
+                model="gemini-3.6-flash",
+            ),
+            mock_response,
+        ]
+
+        settings = Settings(
+            llm_provider="gemini",
+            llm_model="gemini-3.6-flash",
+            llm_max_retries=2,
+            llm_retry_initial_delay=0.01,
+        )
+        client = LiteLLMClient(settings=settings)
+        res = await client.generate_response([LLMMessage(role="user", content="Hello")])
+
+        assert res.content == "Success after retry"
+        assert mock_acompletion.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_non_transient_error_does_not_retry() -> None:
+    """Verify non-transient error (e.g. 401 AuthenticationError) fails immediately without retry."""
+    import litellm
+
+    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
+        mock_acompletion.side_effect = litellm.exceptions.AuthenticationError(
+            message="Invalid API Key",
+            response=MagicMock(),
+            llm_provider="openai",
+            model="gpt-4o-mini",
+        )
+
+        settings = Settings(llm_max_retries=2)
+        client = LiteLLMClient(settings=settings)
+
+        with pytest.raises(LLMAuthenticationException):
+            await client.generate_response([LLMMessage(role="user", content="Hello")])
+
+        # Exactly 1 attempt, no retries wasted on 401
+        assert mock_acompletion.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_clean_exception_mapping_vertex_beta() -> None:
+    """Verify custom Vertex_ai_betaException / MidStreamFallbackError is cleanly mapped to domain exception."""
+    import litellm
+
+    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
+        mock_acompletion.side_effect = litellm.exceptions.MidStreamFallbackError(
+            message="Vertex_ai_betaException: 503 Model overloaded",
+            llm_provider="gemini",
+            model="gemini-3.6-flash",
+        )
+
+        settings = Settings(llm_max_retries=0)
+        client = LiteLLMClient(settings=settings)
+
+        with pytest.raises(LLMConnectionException) as exc_info:
+            stream_gen = client.stream_response([LLMMessage(role="user", content="Hello")])
+            _ = [c async for c in stream_gen]
+
+        assert exc_info.value.status_code == 503
+        assert "AI service is temporarily unavailable" in exc_info.value.message
+        # Ensure internal vertex beta exception details are sanitized
+        assert "Vertex_ai_betaException" not in exc_info.value.message

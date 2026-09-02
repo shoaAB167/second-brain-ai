@@ -268,3 +268,37 @@ async def test_chat_service_streaming_failure_preserves_user_message_and_skips_a
     assert len(messages) == 1
     assert messages[0].role == MessageRole.USER
     assert messages[0].content == "Failing stream prompt"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_streaming_503_connection_error_emits_sse_error(
+    db_session: AsyncSession,
+) -> None:
+    """Verify 503/connection error during streaming emits clean user-friendly error and creates no assistant message."""
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
+    conversation = await repo.create_conversation()
+
+    async def mock_503_stream_gen(*args, **kwargs):
+        raise LLMConnectionException("AI service is temporarily unavailable. Please try again.")
+        yield LLMStreamChunk(content="Never reached")  # type: ignore
+
+    mock_llm_client = MagicMock(spec=LLMClient)
+    mock_llm_client.stream_response = MagicMock(side_effect=mock_503_stream_gen)
+
+    service = ChatService(llm_client=mock_llm_client, conversation_repo=repo)
+    events = [
+        event
+        async for event in service.process_chat_stream(
+            ChatRequest(conversation_id=conversation.id, message="503 stream prompt")
+        )
+    ]
+
+    assert len(events) == 1
+    assert '"type":"error"' in events[0]
+    assert "AI service is temporarily unavailable. Please try again." in events[0]
+
+    # Verify DB persistence: User message is preserved, but NO assistant message was saved
+    messages = await repo.get_conversation_messages(conversation.id)
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.USER
+    assert messages[0].content == "503 stream prompt"

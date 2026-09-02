@@ -50,11 +50,42 @@ class LLMRateLimitException(LLMException):
 
 
 class LLMConnectionException(LLMException):
-    """Raised when network connection or timeout issues occur while reaching the provider."""
+    """Raised when network connection, timeout, or service unavailability issues occur while reaching the provider."""
 
     def __init__(
         self,
-        message: str = "Failed to connect to LLM provider. Please try again later.",
+        message: str = "AI service is temporarily unavailable. Please try again.",
+        status_code: int = 503,
+        details: Optional[Union[Dict[str, Any], list]] = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            status_code=status_code,
+            details=details,
+        )
+
+
+class LLMTimeoutException(LLMConnectionException):
+    """Raised when an LLM stream or request exceeds its bounded timeout."""
+
+    def __init__(
+        self,
+        message: str = "AI service is temporarily unavailable. Please try again.",
+        details: Optional[Union[Dict[str, Any], list]] = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            status_code=504,
+            details=details,
+        )
+
+
+class LLMServiceUnavailableException(LLMConnectionException):
+    """Raised when LLM provider returns 503 / high demand / service overloaded."""
+
+    def __init__(
+        self,
+        message: str = "AI service is temporarily unavailable. Please try again.",
         details: Optional[Union[Dict[str, Any], list]] = None,
     ) -> None:
         super().__init__(

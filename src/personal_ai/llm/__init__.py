@@ -4,6 +4,8 @@ from personal_ai.llm.exceptions import (
     LLMConnectionException,
     LLMException,
     LLMRateLimitException,
+    LLMServiceUnavailableException,
+    LLMTimeoutException,
 )
 from personal_ai.llm.litellm_client import LiteLLMClient
 from personal_ai.llm.models import LLMMessage, LLMProvider, LLMResponse, LLMStreamChunk
@@ -31,4 +33,6 @@ __all__ = [
     "LLMAuthenticationException",
     "LLMRateLimitException",
     "LLMConnectionException",
+    "LLMTimeoutException",
+    "LLMServiceUnavailableException",
 ]
