@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Any, Optional, Union
 import uuid
 
 from personal_ai.core.exceptions import AppException
@@ -41,6 +41,10 @@ class RecordExperience:
         importance: Optional[Union[ExperienceImportance, str]] = None,
         lifecycle: Optional[Union[ExperienceLifecycle, str]] = None,
         extraction_confidence: Optional[float] = None,
+        emotional_context: Optional[Any] = None,
+        people_involved: Optional[Any] = None,
+        temporal_context: Optional[str] = None,
+        evidence_level: Optional[Any] = None,
     ) -> Experience:
         """Execute the RecordExperience use case.
 
@@ -54,6 +58,10 @@ class RecordExperience:
             importance: Optional ExperienceImportance (LOW, MEDIUM, HIGH).
             lifecycle: Optional ExperienceLifecycle (STABLE, RECURRING, TEMPORARY, TIME_BOUND).
             extraction_confidence: Optional extractor confidence float score.
+            emotional_context: Optional emotional context model/dict.
+            people_involved: Optional list of persons involved.
+            temporal_context: Optional temporal qualifier string.
+            evidence_level: Optional evidence level (EXPLICIT_USER, EXTRACTED, INFERRED).
 
         Returns:
             Experience: The created and persisted domain Experience entity.
@@ -89,6 +97,10 @@ class RecordExperience:
                 domain=domain,
                 importance=importance or ExperienceImportance.MEDIUM,
                 lifecycle=lifecycle or ExperienceLifecycle.STABLE,
+                emotional_context=emotional_context,
+                people_involved=people_involved,
+                temporal_context=temporal_context,
+                evidence_level=evidence_level or "EXTRACTED",
                 extraction_confidence=extraction_confidence,
                 status=ExperienceStatus.RECEIVED,
             )

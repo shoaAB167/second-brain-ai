@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from personal_ai.db.models import ExperienceModel
 from personal_ai.domain.experience import (
+    EmotionalContext,
     Experience,
+    ExperienceEvidenceLevel,
     ExperienceImportance,
     ExperienceLifecycle,
     ExperienceLifecycleStatus,
@@ -17,6 +19,7 @@ from personal_ai.domain.experience import (
     ExperienceSource,
     ExperienceStatus,
     ExperienceType,
+    PersonInvolved,
 )
 
 
@@ -24,23 +27,21 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
     """Concrete SQLAlchemy implementation of ExperienceRepository interface."""
 
     def __init__(self, session: AsyncSession) -> None:
-        """Initialize repository with SQLAlchemy AsyncSession.
+        """Initialize repository with active AsyncSession.
 
         Args:
-            session: Active database session.
+            session: SQLAlchemy AsyncSession.
         """
         self._session = session
 
     async def create(self, experience: Experience) -> Experience:
-        """Persist a new Experience entity to PostgreSQL.
-
-        Enforces source_message_id unique constraint race condition safety.
+        """Persist a new Experience domain entity in the database.
 
         Args:
             experience: Domain Experience entity to persist.
 
         Returns:
-            Experience: Persisted Experience domain entity (or existing on duplicate race).
+            Experience: Persisted domain Experience entity.
         """
         user_id_val = uuid.UUID(str(experience.user_id)) if experience.user_id else None
         source_msg_val = uuid.UUID(str(experience.source_message_id)) if experience.source_message_id else None
@@ -61,6 +62,24 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             experience.lifecycle_status.value if hasattr(experience.lifecycle_status, "value") else str(experience.lifecycle_status)
         ) if experience.lifecycle_status else "ACTIVE"
 
+        exp_evidence_val = (
+            experience.evidence_level.value if hasattr(experience.evidence_level, "value") else str(experience.evidence_level)
+        ) if experience.evidence_level else "EXTRACTED"
+
+        raw_emo = (
+            experience.emotional_context.to_dict()
+            if isinstance(experience.emotional_context, EmotionalContext)
+            else (experience.emotional_context if isinstance(experience.emotional_context, dict) else None)
+        )
+
+        raw_people = None
+        if experience.people_involved:
+            raw_people = [
+                p.to_dict() if isinstance(p, PersonInvolved) else p
+                for p in experience.people_involved
+                if p
+            ]
+
         model = ExperienceModel(
             id=experience.id,
             user_id=user_id_val,
@@ -71,6 +90,10 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             importance=exp_importance_val,
             lifecycle=exp_lifecycle_val,
             lifecycle_status=exp_lifecycle_status_val,
+            emotional_context=raw_emo,
+            people_involved=raw_people,
+            temporal_context=experience.temporal_context,
+            evidence_level=exp_evidence_val,
             extraction_confidence=experience.extraction_confidence,
             embedding=experience.embedding,
             embedding_model=experience.embedding_model,
@@ -126,6 +149,26 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
         model.lifecycle_status = (
             experience.lifecycle_status.value if hasattr(experience.lifecycle_status, "value") else str(experience.lifecycle_status)
         ) if experience.lifecycle_status else "ACTIVE"
+
+        raw_emo = (
+            experience.emotional_context.to_dict()
+            if isinstance(experience.emotional_context, EmotionalContext)
+            else (experience.emotional_context if isinstance(experience.emotional_context, dict) else None)
+        )
+        raw_people = None
+        if experience.people_involved:
+            raw_people = [
+                p.to_dict() if isinstance(p, PersonInvolved) else p
+                for p in experience.people_involved
+                if p
+            ]
+
+        model.emotional_context = raw_emo
+        model.people_involved = raw_people
+        model.temporal_context = experience.temporal_context
+        model.evidence_level = (
+            experience.evidence_level.value if hasattr(experience.evidence_level, "value") else str(experience.evidence_level)
+        ) if experience.evidence_level else "EXTRACTED"
         model.extraction_confidence = experience.extraction_confidence
         model.embedding = experience.embedding
         model.embedding_model = experience.embedding_model
@@ -317,6 +360,26 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             except ValueError:
                 exp_lifecycle_status = ExperienceLifecycleStatus.ACTIVE
 
+        exp_evidence = ExperienceEvidenceLevel.EXTRACTED
+        if getattr(model, "evidence_level", None):
+            try:
+                exp_evidence = ExperienceEvidenceLevel(model.evidence_level)
+            except ValueError:
+                exp_evidence = ExperienceEvidenceLevel.EXTRACTED
+
+        exp_emo = None
+        if getattr(model, "emotional_context", None):
+            exp_emo = EmotionalContext.from_dict(model.emotional_context)
+
+        exp_people = None
+        if getattr(model, "people_involved", None):
+            parsed_people = [
+                PersonInvolved.from_dict(p)
+                for p in model.people_involved
+                if p and PersonInvolved.from_dict(p)
+            ]
+            exp_people = parsed_people if parsed_people else None
+
         return Experience(
             id=model.id,
             user_id=str(model.user_id) if model.user_id else None,
@@ -327,6 +390,10 @@ class SQLAlchemyExperienceRepository(ExperienceRepository):
             importance=exp_importance,
             lifecycle=exp_lifecycle,
             lifecycle_status=exp_lifecycle_status,
+            emotional_context=exp_emo,
+            people_involved=exp_people,
+            temporal_context=getattr(model, "temporal_context", None),
+            evidence_level=exp_evidence,
             extraction_confidence=model.extraction_confidence,
             embedding=[float(x) for x in model.embedding] if model.embedding is not None else None,
             embedding_model=model.embedding_model,

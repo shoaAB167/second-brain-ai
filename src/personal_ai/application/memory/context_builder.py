@@ -36,6 +36,30 @@ class MemoryContextBuilder:
                 lines.append(f"Importance: {mem.importance}")
             if mem.lifecycle:
                 lines.append(f"Lifecycle: {mem.lifecycle}")
+            if mem.temporal_context:
+                lines.append(f"Temporal Context: {mem.temporal_context}")
+            if mem.emotional_context and isinstance(mem.emotional_context, dict):
+                emo_parts = []
+                if mem.emotional_context.get("emotion"):
+                    emo_parts.append(f"Emotion: {mem.emotional_context['emotion']}")
+                if mem.emotional_context.get("intensity") is not None:
+                    emo_parts.append(f"Intensity: {mem.emotional_context['intensity']}")
+                if mem.emotional_context.get("trigger"):
+                    emo_parts.append(f"Trigger: {mem.emotional_context['trigger']}")
+                if mem.emotional_context.get("need"):
+                    emo_parts.append(f"Need: {mem.emotional_context['need']}")
+                if mem.emotional_context.get("impact"):
+                    emo_parts.append(f"Impact: {mem.emotional_context['impact']}")
+                if emo_parts:
+                    lines.append(f"Emotional Context: {', '.join(emo_parts)}")
+            if mem.people_involved and isinstance(mem.people_involved, list):
+                people_strs = []
+                for p in mem.people_involved:
+                    if isinstance(p, dict) and p.get("name"):
+                        role_str = f" ({p['role']})" if p.get("role") else ""
+                        people_strs.append(f"{p['name']}{role_str}")
+                if people_strs:
+                    lines.append(f"People Involved: {', '.join(people_strs)}")
             lines.append(f"Content: {mem.content.strip()}")
             entries.append("\n".join(lines))
 
