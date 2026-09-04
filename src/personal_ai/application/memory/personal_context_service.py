@@ -81,7 +81,11 @@ class PersonalContextRetrievalService:
         settings = get_settings()
         cand_limit = candidate_limit or settings.personal_context_candidate_limit
         fin_limit = final_limit or settings.personal_context_final_limit
-        threshold = similarity_threshold
+        threshold = (
+            similarity_threshold
+            if similarity_threshold is not None
+            else settings.personal_context_similarity_threshold
+        )
 
         w_sim = settings.personal_context_weight_similarity
         w_dim = settings.personal_context_weight_dimension

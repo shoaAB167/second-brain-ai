@@ -155,7 +155,7 @@ async def test_relevant_goal_and_project_retrieval(session_maker):
         repo = SQLAlchemyExperienceRepository(session=session)
 
         # Create goal experience
-        vec_goal = await provider.embed("Career goal to reach 30 LPA in AI engineering")
+        vec_goal = await provider.embed("What is my career goal?")
         await repo.create(
             Experience(
                 content="Goal is to reach 30 LPA in AI engineering",
@@ -243,7 +243,7 @@ async def test_emotional_context_retrieval_surfaces_all_attributes(session_maker
     async with session_maker() as session:
         repo = SQLAlchemyExperienceRepository(session=session)
 
-        vec = await provider.embed("Failed technical interview and feeling anxious about AI readiness")
+        vec = await provider.embed("How did I feel after my interview yesterday?")
         await repo.create(
             Experience(
                 content="Failed an AI technical interview",
@@ -298,7 +298,7 @@ async def test_preference_and_habit_retrieval(session_maker):
     async with session_maker() as session:
         repo = SQLAlchemyExperienceRepository(session=session)
 
-        vec_habit = await provider.embed("Usually goes to gym at 6 PM")
+        vec_habit = await provider.embed("At what time do I usually go to gym?")
         await repo.create(
             Experience(
                 content="Usually goes to gym around 6 PM",
@@ -379,7 +379,7 @@ async def test_lifecycle_filtering_active_vs_historical(session_maker):
     async with session_maker() as session:
         repo = SQLAlchemyExperienceRepository(session=session)
 
-        vec_old = await provider.embed("Lived in London in the past")
+        vec_old = await provider.embed("Where did I live in the past?")
         await repo.create(
             Experience(
                 content="Lived in London",
@@ -393,7 +393,7 @@ async def test_lifecycle_filtering_active_vs_historical(session_maker):
             )
         )
 
-        vec_new = await provider.embed("Lives in Bangalore currently")
+        vec_new = await provider.embed("Where do I currently live?")
         await repo.create(
             Experience(
                 content="Lives in Bangalore",
@@ -421,7 +421,11 @@ async def test_lifecycle_filtering_active_vs_historical(session_maker):
         assert "Lived in London" in hist_contents
 
         # Explicit include_historical=True -> Includes SUPERSEDED
-        explicit_hist_context = await service.retrieve_context(user_id=user_id, query="Where do I live?", include_historical=True)
+        explicit_hist_context = await service.retrieve_context(
+            user_id=user_id,
+            query="Where did I live in the past?",
+            include_historical=True,
+        )
         assert any(item.content == "Lived in London" for item in explicit_hist_context.items)
 
 
@@ -472,7 +476,7 @@ async def test_legacy_experiences_compatibility(session_maker):
     async with session_maker() as session:
         repo = SQLAlchemyExperienceRepository(session=session)
 
-        vec = await provider.embed("Likes drinking green tea")
+        vec = await provider.embed("tea preference")
         await repo.create(
             Experience(
                 content="Likes drinking green tea",
@@ -733,4 +737,76 @@ async def test_configurable_ranking_weights(session_maker):
         # 0.50 * 1.0 + 0.20 * 1.0 (goal query matches GOAL dimension) + 0.20 * 1.0 (HIGH) + 0.10 * 1.0 (recent) = 1.00
         assert len(context.items) == 1
         assert context.items[0].score == 1.0
+
+
+@pytest.mark.asyncio
+async def test_similarity_threshold_configuration_and_override():
+    """Requirement: Default retrieval uses Settings threshold; explicit similarity_threshold overrides it."""
+    user_id = uuid.uuid4()
+    mock_repo = MagicMock(spec=SQLAlchemyExperienceRepository)
+    mock_repo.search_by_vector = AsyncMock(return_value=[])
+    provider = MockEmbeddingProvider(dimensions=1536)
+
+    service = PersonalContextRetrievalService(embedding_provider=provider, experience_repo=mock_repo)
+
+    # 1. Default retrieval passes configured settings threshold (0.3)
+    await service.retrieve_context(user_id=user_id, query="What are my goals?")
+    call_kwargs_default = mock_repo.search_by_vector.call_args.kwargs
+    assert call_kwargs_default["threshold"] == 0.3
+
+    # 2. Explicit similarity_threshold overrides configured default
+    await service.retrieve_context(
+        user_id=user_id,
+        query="What are my goals?",
+        similarity_threshold=0.65,
+    )
+    call_kwargs_override = mock_repo.search_by_vector.call_args.kwargs
+    assert call_kwargs_override["threshold"] == 0.65
+
+
+def test_settings_ranking_weights_validation():
+    """Requirement: Validate that ranking weights in Settings are non-negative and sum to 1.0."""
+    # Valid default configuration
+    valid_settings = Settings()
+    assert valid_settings.personal_context_weight_similarity == 0.70
+    assert valid_settings.personal_context_weight_dimension == 0.15
+    assert valid_settings.personal_context_weight_importance == 0.10
+    assert valid_settings.personal_context_weight_recency == 0.05
+
+    # Valid custom configuration summing to 1.0
+    custom_valid = Settings(
+        personal_context_weight_similarity=0.40,
+        personal_context_weight_dimension=0.30,
+        personal_context_weight_importance=0.20,
+        personal_context_weight_recency=0.10,
+    )
+    assert custom_valid.personal_context_weight_similarity == 0.40
+
+    # Invalid: Negative weight rejected
+    with pytest.raises(ValueError, match="must be non-negative"):
+        Settings(
+            personal_context_weight_similarity=-0.10,
+            personal_context_weight_dimension=0.70,
+            personal_context_weight_importance=0.20,
+            personal_context_weight_recency=0.20,
+        )
+
+    # Invalid: Sum != 1.0 rejected (under-sum)
+    with pytest.raises(ValueError, match="must sum to approximately 1.0"):
+        Settings(
+            personal_context_weight_similarity=0.50,
+            personal_context_weight_dimension=0.10,
+            personal_context_weight_importance=0.10,
+            personal_context_weight_recency=0.05,
+        )
+
+    # Invalid: Sum != 1.0 rejected (over-sum)
+    with pytest.raises(ValueError, match="must sum to approximately 1.0"):
+        Settings(
+            personal_context_weight_similarity=0.80,
+            personal_context_weight_dimension=0.20,
+            personal_context_weight_importance=0.20,
+            personal_context_weight_recency=0.10,
+        )
+
 

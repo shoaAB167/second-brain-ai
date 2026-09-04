@@ -145,6 +145,27 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_personal_context_ranking_weights(self) -> "Settings":
+        """Validate that personal context ranking weights are non-negative and sum to approximately 1.0."""
+        weights = [
+            ("personal_context_weight_similarity", self.personal_context_weight_similarity),
+            ("personal_context_weight_dimension", self.personal_context_weight_dimension),
+            ("personal_context_weight_importance", self.personal_context_weight_importance),
+            ("personal_context_weight_recency", self.personal_context_weight_recency),
+        ]
+        for name, val in weights:
+            if val < 0.0:
+                raise ValueError(f"Ranking weight '{name}' ({val}) must be non-negative (>= 0.0).")
+
+        total_weight = sum(val for _, val in weights)
+        if abs(total_weight - 1.0) > 0.001:
+            raise ValueError(
+                f"Personal context ranking weights must sum to approximately 1.0 (got {total_weight:.4f})."
+            )
+        return self
+
+
 
 @lru_cache
 def get_settings() -> Settings:
