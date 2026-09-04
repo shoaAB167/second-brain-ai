@@ -1,9 +1,11 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 import uuid
 
+from personal_ai.domain.experience.emotional_context import EmotionalContext, PersonInvolved
 from personal_ai.domain.experience.enums import (
+    ExperienceEvidenceLevel,
     ExperienceImportance,
     ExperienceLifecycle,
     ExperienceLifecycleStatus,
@@ -36,6 +38,10 @@ class Experience:
     importance: ExperienceImportance = field(default=ExperienceImportance.MEDIUM)
     lifecycle: ExperienceLifecycle = field(default=ExperienceLifecycle.STABLE)
     lifecycle_status: ExperienceLifecycleStatus = field(default=ExperienceLifecycleStatus.ACTIVE)
+    emotional_context: Optional[EmotionalContext] = None
+    people_involved: Optional[List[PersonInvolved]] = None
+    temporal_context: Optional[str] = None
+    evidence_level: ExperienceEvidenceLevel = field(default=ExperienceEvidenceLevel.EXTRACTED)
     status: ExperienceStatus = field(default=ExperienceStatus.RECEIVED)
     extraction_confidence: Optional[float] = None
     embedding: Optional[List[float]] = None
@@ -92,3 +98,26 @@ class Experience:
                 self.lifecycle_status = ExperienceLifecycleStatus(self.lifecycle_status.upper().strip())
             except ValueError:
                 raise ValueError(f"Invalid experience lifecycle status: '{self.lifecycle_status}'.")
+
+        if isinstance(self.evidence_level, str):
+            try:
+                self.evidence_level = ExperienceEvidenceLevel(self.evidence_level.upper().strip())
+            except ValueError:
+                raise ValueError(f"Invalid experience evidence level: '{self.evidence_level}'.")
+
+        if isinstance(self.emotional_context, dict):
+            self.emotional_context = EmotionalContext.from_dict(self.emotional_context)
+
+        if isinstance(self.people_involved, list):
+            parsed_people = []
+            for p in self.people_involved:
+                if isinstance(p, dict):
+                    obj = PersonInvolved.from_dict(p)
+                    if obj:
+                        parsed_people.append(obj)
+                elif isinstance(p, PersonInvolved):
+                    parsed_people.append(p)
+            self.people_involved = parsed_people if parsed_people else None
+
+        if self.temporal_context is not None:
+            self.temporal_context = str(self.temporal_context).strip() or None

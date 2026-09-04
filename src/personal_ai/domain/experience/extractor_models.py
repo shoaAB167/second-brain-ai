@@ -1,11 +1,50 @@
-from typing import Any, Optional
+from typing import Any, List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from personal_ai.domain.experience.enums import (
+    ExperienceEvidenceLevel,
     ExperienceImportance,
     ExperienceLifecycle,
     ExperienceType,
 )
+
+
+class EmotionalContextModel(BaseModel):
+    """Structured emotional context extracted from explicit user expressions."""
+
+    emotion: Optional[str] = Field(default=None, description="Primary emotion name (e.g. 'fear', 'joy', 'anxiety').")
+    intensity: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Intensity from 0.0 to 1.0.")
+    trigger: Optional[str] = Field(default=None, description="Event or circumstance triggering the emotion.")
+    need: Optional[str] = Field(default=None, description="Explicitly expressed human/situational need.")
+    impact: Optional[str] = Field(default=None, description="Reported effect on behavior, confidence, or outlook.")
+
+    @field_validator("intensity", mode="before")
+    @classmethod
+    def validate_intensity(cls, value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            val_lower = value.strip().lower()
+            if val_lower == "high":
+                return 0.8
+            elif val_lower in ("medium", "moderate"):
+                return 0.5
+            elif val_lower == "low":
+                return 0.2
+        try:
+            num = float(value)
+            if not (0.0 <= num <= 1.0):
+                raise ValueError(f"Intensity must be between 0.0 and 1.0, got {num}")
+            return round(num, 2)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Invalid intensity value: {value}") from exc
+
+
+class PersonInvolvedModel(BaseModel):
+    """Contextual person associated with an extracted experience."""
+
+    name: str = Field(..., description="Name or identifier of the person.")
+    role: Optional[str] = Field(default=None, description="Relationship role (e.g. 'friend', 'sister', 'manager').")
 
 
 class ExperienceExtractionResult(BaseModel):
@@ -39,6 +78,22 @@ class ExperienceExtractionResult(BaseModel):
     lifecycle: Optional[ExperienceLifecycle] = Field(
         default=ExperienceLifecycle.STABLE,
         description="Temporal durability and lifecycle scope (STABLE, RECURRING, TEMPORARY, TIME_BOUND).",
+    )
+    emotional_context: Optional[EmotionalContextModel] = Field(
+        default=None,
+        description="Structured human emotional context if explicitly expressed by the user.",
+    )
+    people_involved: Optional[List[PersonInvolvedModel]] = Field(
+        default=None,
+        description="List of individuals involved or mentioned in this experience.",
+    )
+    temporal_context: Optional[str] = Field(
+        default=None,
+        description="Temporal qualifier or timeframe (e.g. 'today', 'for six months', 'yesterday').",
+    )
+    evidence_level: Optional[ExperienceEvidenceLevel] = Field(
+        default=ExperienceEvidenceLevel.EXTRACTED,
+        description="Evidence/provenance certainty level (EXPLICIT_USER, EXTRACTED, INFERRED).",
     )
     status: Optional[str] = Field(
         default="active",
@@ -144,6 +199,25 @@ class ExperienceExtractionResult(BaseModel):
             valid_values = [e.value for e in ExperienceLifecycle]
             raise ValueError(
                 f"Invalid experience lifecycle '{value}'. Valid values are: {valid_values}"
+            ) from exc
+
+    @field_validator("evidence_level", mode="before")
+    @classmethod
+    def validate_evidence_level(cls, value: Any) -> Optional[ExperienceEvidenceLevel]:
+        """Validate evidence_level strictly fails closed on invalid values."""
+        if value is None:
+            return ExperienceEvidenceLevel.EXTRACTED
+        if isinstance(value, ExperienceEvidenceLevel):
+            return value
+        if not isinstance(value, str):
+            raise ValueError(f"Evidence level must be a valid string or enum, got {type(value).__name__}: {value!r}")
+        val_str = str(value).upper().strip()
+        try:
+            return ExperienceEvidenceLevel(val_str)
+        except ValueError as exc:
+            valid_values = [e.value for e in ExperienceEvidenceLevel]
+            raise ValueError(
+                f"Invalid evidence level '{value}'. Valid values are: {valid_values}"
             ) from exc
 
     @model_validator(mode="after")

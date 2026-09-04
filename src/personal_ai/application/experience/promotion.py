@@ -165,6 +165,18 @@ class ExperiencePromotionService:
             target_importance = extraction_res.importance or ExperienceImportance.MEDIUM
             target_lifecycle = extraction_res.lifecycle or ExperienceLifecycle.STABLE
             target_confidence = extraction_res.confidence
+            target_emotional_context = (
+                extraction_res.emotional_context.model_dump()
+                if extraction_res.emotional_context
+                else None
+            )
+            target_people_involved = (
+                [p.model_dump() for p in extraction_res.people_involved]
+                if extraction_res.people_involved
+                else None
+            )
+            target_temporal_context = extraction_res.temporal_context
+            target_evidence_level = extraction_res.evidence_level or "EXTRACTED"
         else:
             target_content = message.content
             target_type = classification_res.type if classification_res else None
@@ -172,6 +184,10 @@ class ExperiencePromotionService:
             target_importance = ExperienceImportance.MEDIUM
             target_lifecycle = ExperienceLifecycle.STABLE
             target_confidence = None
+            target_emotional_context = None
+            target_people_involved = None
+            target_temporal_context = None
+            target_evidence_level = "EXTRACTED"
 
         try:
             experience = await self._record_experience.execute(
@@ -184,6 +200,10 @@ class ExperiencePromotionService:
                 importance=target_importance,
                 lifecycle=target_lifecycle,
                 extraction_confidence=target_confidence,
+                emotional_context=target_emotional_context,
+                people_involved=target_people_involved,
+                temporal_context=target_temporal_context,
+                evidence_level=target_evidence_level,
             )
         except Exception:
             # Handle duplicate promotion race condition safely with retry loop

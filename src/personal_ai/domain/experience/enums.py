@@ -67,3 +67,10 @@ class ExperienceRelationshipType(str, Enum):
     SUPERSEDES = "SUPERSEDES"
     RELATED = "RELATED"
     UNRELATED = "UNRELATED"
+
+
+class ExperienceEvidenceLevel(str, Enum):
+    """Controlled evidence/provenance level for memory extraction."""
+    EXPLICIT_USER = "EXPLICIT_USER"
+    EXTRACTED = "EXTRACTED"
+    INFERRED = "INFERRED"

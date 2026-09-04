@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 import time
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import uuid
 
 from personal_ai.config.settings import get_settings
@@ -24,6 +24,10 @@ class MemorySearchResult:
     importance: Optional[str] = "MEDIUM"
     lifecycle: Optional[str] = "STABLE"
     lifecycle_status: Optional[str] = "ACTIVE"
+    emotional_context: Optional[Dict[str, Any]] = None
+    people_involved: Optional[List[Dict[str, Any]]] = None
+    temporal_context: Optional[str] = None
+    evidence_level: Optional[str] = "EXTRACTED"
     status: str = "RECEIVED"
     similarity: float = 0.0
     source_message_id: Optional[uuid.UUID] = None
@@ -150,6 +154,10 @@ class MemoryRetrievalService:
             exp_imp = exp.importance.value if hasattr(exp.importance, "value") else (str(exp.importance) if exp.importance else "MEDIUM")
             exp_life = exp.lifecycle.value if hasattr(exp.lifecycle, "value") else (str(exp.lifecycle) if exp.lifecycle else "STABLE")
             exp_life_status = exp.lifecycle_status.value if hasattr(exp.lifecycle_status, "value") else (str(exp.lifecycle_status) if exp.lifecycle_status else "ACTIVE")
+            exp_evidence = exp.evidence_level.value if hasattr(exp.evidence_level, "value") else (str(exp.evidence_level) if exp.evidence_level else "EXTRACTED")
+            exp_emo_dict = exp.emotional_context.to_dict() if hasattr(exp.emotional_context, "to_dict") else (exp.emotional_context if isinstance(exp.emotional_context, dict) else None)
+            exp_people_list = [p.to_dict() if hasattr(p, "to_dict") else p for p in exp.people_involved] if exp.people_involved else None
+
             results.append(
                 MemorySearchResult(
                     experience_id=exp.id,
@@ -159,6 +167,10 @@ class MemoryRetrievalService:
                     importance=exp_imp,
                     lifecycle=exp_life,
                     lifecycle_status=exp_life_status,
+                    emotional_context=exp_emo_dict,
+                    people_involved=exp_people_list,
+                    temporal_context=exp.temporal_context,
+                    evidence_level=exp_evidence,
                     status=exp.status.value if hasattr(exp.status, "value") else str(exp.status),
                     similarity=round(similarity, 4),
                     source_message_id=exp.source_message_id,

@@ -14,6 +14,7 @@ from personal_ai.db.models import Message, MessageRole
 from personal_ai.domain.experience import (
     ClassificationResult,
     Experience,
+    ExperienceEvidenceLevel,
     ExperienceExtractionResult,
     ExperienceImportance,
     ExperienceLifecycle,
@@ -89,6 +90,10 @@ async def test_experience_promotion_service_promotes_user_message_when_extractio
         importance=ExperienceImportance.MEDIUM,
         lifecycle=ExperienceLifecycle.STABLE,
         extraction_confidence=None,
+        emotional_context=None,
+        people_involved=None,
+        temporal_context=None,
+        evidence_level="EXTRACTED",
     )
 
 
@@ -152,6 +157,10 @@ async def test_extraction_succeeds_creates_experience_with_structured_content_an
         importance=ExperienceImportance.MEDIUM,
         lifecycle=ExperienceLifecycle.STABLE,
         extraction_confidence=0.95,
+        emotional_context=None,
+        people_involved=None,
+        temporal_context=None,
+        evidence_level=ExperienceEvidenceLevel.EXTRACTED,
     )
 
 

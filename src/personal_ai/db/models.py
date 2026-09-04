@@ -144,6 +144,10 @@ class ExperienceModel(Base):
     importance: Mapped[str] = mapped_column(String(20), nullable=False, default="MEDIUM", index=True)
     lifecycle: Mapped[str] = mapped_column(String(20), nullable=False, default="STABLE", index=True)
     lifecycle_status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", index=True)
+    emotional_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    people_involved: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    temporal_context: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    evidence_level: Mapped[str] = mapped_column(String(30), nullable=False, default="EXTRACTED", index=True)
     extraction_confidence: Mapped[Optional[float]] = mapped_column(nullable=True)
 
     # Embedding & Vector Storage Fields (PR #10)
