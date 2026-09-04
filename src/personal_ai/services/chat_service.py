@@ -1,11 +1,16 @@
 import asyncio
-from typing import Any, AsyncGenerator, List, Optional
+from typing import Any, AsyncGenerator, List, Optional, Union
 import uuid
 
 from personal_ai.application.experience.background_processor import (
     BackgroundExperienceProcessor,
 )
-from personal_ai.application.memory import MemoryContextBuilder, MemoryRetrievalService
+from personal_ai.application.memory import (
+    MemoryContextBuilder,
+    MemoryRetrievalService,
+    PersonalContextBuilder,
+    PersonalContextRetrievalService,
+)
 from personal_ai.config.settings import get_settings
 from personal_ai.core.exceptions import AppException
 from personal_ai.core.logger import get_logger
@@ -29,10 +34,10 @@ logger = get_logger(__name__)
 
 
 class ChatService:
-    """Business logic service managing chat completion, memory retrieval augmentation, and history.
+    """Business logic service managing chat completion, personal context retrieval augmentation, and history.
 
     Depends exclusively on abstract interfaces.
-    Orchestrates semantic memory retrieval safely without failing chat upon retrieval issues.
+    Orchestrates personal context retrieval safely without failing chat upon retrieval issues.
     """
 
     def __init__(
@@ -41,7 +46,8 @@ class ChatService:
         conversation_repo: ConversationRepository,
         bg_processor: Optional[BackgroundExperienceProcessor] = None,
         retrieval_service: Optional[MemoryRetrievalService] = None,
-        context_builder: Optional[MemoryContextBuilder] = None,
+        personal_context_service: Optional[PersonalContextRetrievalService] = None,
+        context_builder: Optional[Union[PersonalContextBuilder, MemoryContextBuilder]] = None,
     ) -> None:
         """Initialize ChatService with dependencies.
 
@@ -49,43 +55,63 @@ class ChatService:
             llm_client: Abstract LLM client interface.
             conversation_repo: Abstract conversation repository interface.
             bg_processor: Abstract background Experience processor interface.
-            retrieval_service: Optional MemoryRetrievalService for semantic memory augmentation.
-            context_builder: Optional MemoryContextBuilder for formatting memories into prompts.
+            retrieval_service: Optional legacy MemoryRetrievalService.
+            personal_context_service: Optional PersonalContextRetrievalService for dimension-aware context.
+            context_builder: Optional context builder for formatting context into prompts.
         """
         self._llm_client = llm_client
         self._conversation_repo = conversation_repo
         self._bg_processor = bg_processor
         self._retrieval_service = retrieval_service
-        self._context_builder = context_builder or MemoryContextBuilder()
+        self._personal_context_service = personal_context_service
+        self._context_builder = context_builder or PersonalContextBuilder()
 
     async def _retrieve_memory_context(
         self,
         user_id: Optional[uuid.UUID],
         query: str,
+        conversation_context: Optional[List[LLMMessage]] = None,
     ) -> Optional[str]:
-        """Perform fail-safe user-scoped memory retrieval and format into structured prompt context."""
+        """Perform fail-safe user-scoped personal context retrieval and format into structured prompt context."""
         settings = get_settings()
-        if not self._retrieval_service or not user_id or not settings.memory_retrieval_enabled:
+        if not user_id or not settings.memory_retrieval_enabled:
             return None
 
         try:
-            logger.info("Starting memory retrieval for chat [user_id=%s]", user_id)
-            memories = await self._retrieval_service.search(
-                user_id=user_id,
-                query=query,
-                limit=settings.memory_retrieval_limit,
-            )
-            logger.info(
-                "Memory retrieval for chat completed [user_id=%s, count=%d]",
-                user_id,
-                len(memories),
-            )
-            if memories:
-                return self._context_builder.build_context(memories)
+            if self._personal_context_service:
+                logger.info("Starting personal context retrieval for chat [user_id=%s]", user_id)
+                personal_context = await self._personal_context_service.retrieve_context(
+                    user_id=user_id,
+                    query=query,
+                    conversation_context=conversation_context,
+                )
+                logger.info(
+                    "Personal context retrieval completed [user_id=%s, count=%d]",
+                    user_id,
+                    len(personal_context.items),
+                )
+                if not personal_context.is_empty:
+                    return self._context_builder.build_context(personal_context)
+                return None
+            elif self._retrieval_service:
+                logger.info("Starting memory retrieval for chat [user_id=%s]", user_id)
+                memories = await self._retrieval_service.search(
+                    user_id=user_id,
+                    query=query,
+                    limit=settings.memory_retrieval_limit,
+                )
+                logger.info(
+                    "Memory retrieval for chat completed [user_id=%s, count=%d]",
+                    user_id,
+                    len(memories),
+                )
+                if memories:
+                    return self._context_builder.build_context(memories)
+                return None
             return None
         except Exception as exc:
             logger.warning(
-                "Memory retrieval failed safely, proceeding with unaugmented chat [user_id=%s]: %s",
+                "Personal context retrieval failed safely, proceeding with unaugmented chat [user_id=%s]: %s",
                 user_id,
                 exc,
             )
@@ -159,14 +185,22 @@ class ChatService:
                 user_id,
             )
 
-        # 2. Retrieve relevant long-term memories (fail-safe enhancement)
+        # 2. Retrieve previous conversation messages in chronological order
+        stored_messages = await self._conversation_repo.get_conversation_messages(conv_id)
+        conv_llm_messages = [
+            LLMMessage(
+                role=msg.role.value if hasattr(msg.role, "value") else str(msg.role),
+                content=msg.content,
+            )
+            for msg in stored_messages
+        ]
+
+        # 3. Retrieve relevant personal context memories (fail-safe enhancement)
         memory_context = await self._retrieve_memory_context(
             user_id=user_id,
             query=request.message,
+            conversation_context=conv_llm_messages,
         )
-
-        # 3. Retrieve previous conversation messages in chronological order
-        stored_messages = await self._conversation_repo.get_conversation_messages(conv_id)
 
         # 4. Construct complete LLM messages structure
         history = self._build_llm_messages(
@@ -243,14 +277,22 @@ class ChatService:
                 user_id,
             )
 
-        # 2. Retrieve relevant long-term memories (fail-safe enhancement)
+        # 2. Retrieve previous conversation messages in chronological order
+        stored_messages = await self._conversation_repo.get_conversation_messages(conv_id)
+        conv_llm_messages = [
+            LLMMessage(
+                role=msg.role.value if hasattr(msg.role, "value") else str(msg.role),
+                content=msg.content,
+            )
+            for msg in stored_messages
+        ]
+
+        # 3. Retrieve relevant personal context memories (fail-safe enhancement)
         memory_context = await self._retrieve_memory_context(
             user_id=user_id,
             query=request.message,
+            conversation_context=conv_llm_messages,
         )
-
-        # 3. Retrieve previous conversation messages in chronological order
-        stored_messages = await self._conversation_repo.get_conversation_messages(conv_id)
 
         # 4. Construct complete LLM messages structure
         history = self._build_llm_messages(

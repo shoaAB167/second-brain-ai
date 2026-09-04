@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     memory_retrieval_enabled: bool = True
     memory_retrieval_limit: int = 5
 
+    # Personal Context Retrieval Settings (PR #18)
+    personal_context_candidate_limit: int = 15
+    personal_context_final_limit: int = 5
+    personal_context_similarity_threshold: float = 0.3
+
     # Memory Evolution Settings
     memory_evolution_enabled: bool = True
     memory_evolution_candidate_limit: int = 3
@@ -115,6 +120,24 @@ class Settings(BaseSettings):
         if not (1 <= self.memory_retrieval_limit <= 20):
             raise ValueError(
                 f"Configured memory_retrieval_limit ({self.memory_retrieval_limit}) must be between 1 and 20."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_personal_context_limits(self) -> "Settings":
+        """Validate that personal context candidate and final limits are properly bounded."""
+        if not (1 <= self.personal_context_candidate_limit <= 50):
+            raise ValueError(
+                f"personal_context_candidate_limit ({self.personal_context_candidate_limit}) must be between 1 and 50."
+            )
+        if not (1 <= self.personal_context_final_limit <= 20):
+            raise ValueError(
+                f"personal_context_final_limit ({self.personal_context_final_limit}) must be between 1 and 20."
+            )
+        if self.personal_context_final_limit > self.personal_context_candidate_limit:
+            raise ValueError(
+                f"personal_context_final_limit ({self.personal_context_final_limit}) cannot exceed "
+                f"personal_context_candidate_limit ({self.personal_context_candidate_limit})."
             )
         return self
 

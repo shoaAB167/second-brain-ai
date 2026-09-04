@@ -7,10 +7,10 @@ from personal_ai.api.dependencies import (
     get_current_user_id,
     get_db_session,
     get_llm_client,
-    get_memory_retrieval_service,
+    get_personal_context_retrieval_service,
 )
 from personal_ai.application.experience import BackgroundExperienceProcessor
-from personal_ai.application.memory import MemoryRetrievalService
+from personal_ai.application.memory import PersonalContextRetrievalService
 from personal_ai.db.repositories import (
     ConversationRepository,
     SQLAlchemyConversationRepository,
@@ -45,14 +45,14 @@ def get_chat_service(
     llm_client: LLMClient = Depends(get_llm_client),
     conversation_repo: ConversationRepository = Depends(get_conversation_repository),
     bg_processor: BackgroundExperienceProcessor = Depends(get_background_experience_processor),
-    retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
+    personal_context_service: PersonalContextRetrievalService = Depends(get_personal_context_retrieval_service),
 ) -> ChatService:
-    """Dependency provider for ChatService, injecting repository, LLM, background processor, and retrieval service."""
+    """Dependency provider for ChatService, injecting repository, LLM, background processor, and personal context service."""
     return ChatService(
         llm_client=llm_client,
         conversation_repo=conversation_repo,
         bg_processor=bg_processor,
-        retrieval_service=retrieval_service,
+        personal_context_service=personal_context_service,
     )
 
 
