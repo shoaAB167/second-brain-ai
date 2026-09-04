@@ -17,6 +17,11 @@ from personal_ai.domain.experience.extractor_models import (
     ExperienceExtractionResult,
     PersonInvolvedModel,
 )
+from personal_ai.domain.experience.personal_context import (
+    PersonalContext,
+    PersonalContextItem,
+    RetrievalDimension,
+)
 from personal_ai.domain.experience.relationship import ExperienceRelationship
 from personal_ai.domain.experience.relationship_repository import ExperienceRelationshipRepository
 from personal_ai.domain.experience.repository import ExperienceRepository
@@ -41,4 +46,7 @@ __all__ = [
     "EmotionalContextModel",
     "PersonInvolvedModel",
     "build_experience_embedding_text",
+    "RetrievalDimension",
+    "PersonalContextItem",
+    "PersonalContext",
 ]

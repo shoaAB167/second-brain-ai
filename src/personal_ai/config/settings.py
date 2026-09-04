@@ -73,6 +73,15 @@ class Settings(BaseSettings):
     memory_retrieval_enabled: bool = True
     memory_retrieval_limit: int = 5
 
+    # Personal Context Retrieval Settings (PR #18)
+    personal_context_candidate_limit: int = 15
+    personal_context_final_limit: int = 5
+    personal_context_similarity_threshold: float = 0.3
+    personal_context_weight_similarity: float = 0.70
+    personal_context_weight_dimension: float = 0.15
+    personal_context_weight_importance: float = 0.10
+    personal_context_weight_recency: float = 0.05
+
     # Memory Evolution Settings
     memory_evolution_enabled: bool = True
     memory_evolution_candidate_limit: int = 3
@@ -117,6 +126,45 @@ class Settings(BaseSettings):
                 f"Configured memory_retrieval_limit ({self.memory_retrieval_limit}) must be between 1 and 20."
             )
         return self
+
+    @model_validator(mode="after")
+    def validate_personal_context_limits(self) -> "Settings":
+        """Validate that personal context candidate and final limits are properly bounded."""
+        if not (1 <= self.personal_context_candidate_limit <= 50):
+            raise ValueError(
+                f"personal_context_candidate_limit ({self.personal_context_candidate_limit}) must be between 1 and 50."
+            )
+        if not (1 <= self.personal_context_final_limit <= 20):
+            raise ValueError(
+                f"personal_context_final_limit ({self.personal_context_final_limit}) must be between 1 and 20."
+            )
+        if self.personal_context_final_limit > self.personal_context_candidate_limit:
+            raise ValueError(
+                f"personal_context_final_limit ({self.personal_context_final_limit}) cannot exceed "
+                f"personal_context_candidate_limit ({self.personal_context_candidate_limit})."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_personal_context_ranking_weights(self) -> "Settings":
+        """Validate that personal context ranking weights are non-negative and sum to approximately 1.0."""
+        weights = [
+            ("personal_context_weight_similarity", self.personal_context_weight_similarity),
+            ("personal_context_weight_dimension", self.personal_context_weight_dimension),
+            ("personal_context_weight_importance", self.personal_context_weight_importance),
+            ("personal_context_weight_recency", self.personal_context_weight_recency),
+        ]
+        for name, val in weights:
+            if val < 0.0:
+                raise ValueError(f"Ranking weight '{name}' ({val}) must be non-negative (>= 0.0).")
+
+        total_weight = sum(val for _, val in weights)
+        if abs(total_weight - 1.0) > 0.001:
+            raise ValueError(
+                f"Personal context ranking weights must sum to approximately 1.0 (got {total_weight:.4f})."
+            )
+        return self
+
 
 
 @lru_cache

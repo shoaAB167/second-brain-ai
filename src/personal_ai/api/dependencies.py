@@ -6,7 +6,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from personal_ai.application.auth.auth_service import AuthService
-from personal_ai.application.memory import MemoryRetrievalService
+from personal_ai.application.memory import (
+    MemoryRetrievalService,
+    PersonalContextRetrievalService,
+)
 from personal_ai.core.auth import decode_access_token
 from personal_ai.core.exceptions import AppException
 from personal_ai.db.repositories.base import UserRepository
@@ -61,17 +64,29 @@ def get_memory_retrieval_service(
     )
 
 
+def get_personal_context_retrieval_service(
+    session: AsyncSession = Depends(get_db_session),
+    embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
+) -> PersonalContextRetrievalService:
+    """Dependency provider constructing PersonalContextRetrievalService for PR #18."""
+    repo = SQLAlchemyExperienceRepository(session=session)
+    return PersonalContextRetrievalService(
+        embedding_provider=embedding_provider,
+        experience_repo=repo,
+    )
+
+
 async def get_chat_service(
     session: AsyncSession = Depends(get_db_session),
     llm_client: LLMClient = Depends(get_llm_client),
-    retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
+    personal_context_service: PersonalContextRetrievalService = Depends(get_personal_context_retrieval_service),
 ) -> ChatService:
-    """Dependency providing ChatService with database session, LLM client, and memory retrieval service."""
+    """Dependency providing ChatService with database session, LLM client, and personal context retrieval service."""
     conversation_repo = SQLAlchemyConversationRepository(session=session)
     return ChatService(
         llm_client=llm_client,
         conversation_repo=conversation_repo,
-        retrieval_service=retrieval_service,
+        personal_context_service=personal_context_service,
     )
 
 
