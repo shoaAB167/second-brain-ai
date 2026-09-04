@@ -48,7 +48,7 @@ async def session_maker():
 
 
 # ==============================================================================
-# 1. Query & Context Dimension Analysis
+# 1. Query & Context Dimension Analysis (High-Confidence vs Empty)
 # ==============================================================================
 
 def test_query_dimension_analyzer_single_dimensions():
@@ -61,10 +61,37 @@ def test_query_dimension_analyzer_single_dimensions():
     assert RetrievalDimension.HABITS in analyzer.analyze_query("At what time do I usually go to gym?")
     assert RetrievalDimension.RELATIONSHIPS in analyzer.analyze_query("Where does my sister live?")
     assert RetrievalDimension.EMOTIONS in analyzer.analyze_query("I feel anxious about my job interview.")
-    assert RetrievalDimension.CURRENT_STATE in analyzer.analyze_query("I am feeling tired today.")
-    assert RetrievalDimension.CONSTRAINTS in analyzer.analyze_query("What are my budget constraints?")
-    assert RetrievalDimension.PAST_EXPERIENCES in analyzer.analyze_query("What did I do yesterday in the past?")
+    assert RetrievalDimension.CURRENT_STATE in analyzer.analyze_query("How am I feeling today?")
+    assert RetrievalDimension.CONSTRAINTS in analyzer.analyze_query("What are my constraints?")
+    assert RetrievalDimension.PAST_EXPERIENCES in analyzer.analyze_query("What did I do in the past?")
     assert RetrievalDimension.PERSONALITY in analyzer.analyze_query("Who am I and what is my name?")
+
+
+def test_ordinary_conversational_query_returns_no_dimensions():
+    """Requirement: Ordinary conversational queries must NOT trigger broad accidental dimensions."""
+    analyzer = QueryDimensionAnalyzer()
+
+    assert analyzer.analyze_query("Can you help me solve this bug?") == []
+    assert analyzer.analyze_query("Tell me about Python decorators.") == []
+    assert analyzer.analyze_query("How does async/await work in FastAPI?") == []
+    assert analyzer.analyze_query("Write a quick sorting algorithm.") == []
+
+
+def test_conservative_historical_query_detection():
+    """Requirement: Historical detection only triggers on high-confidence historical inquiries."""
+    analyzer = QueryDimensionAnalyzer()
+
+    # High-confidence historical patterns -> True
+    assert analyzer.is_historical_query("what happened before...") is True
+    assert analyzer.is_historical_query("what did I say previously about my goals?") is True
+    assert analyzer.is_historical_query("remember when we talked about London?") is True
+    assert analyzer.is_historical_query("what was I doing last year?") is True
+    assert analyzer.is_historical_query("Where did I live in the past?") is True
+
+    # Ordinary queries containing words like 'before', 'like', 'work' -> False
+    assert analyzer.is_historical_query("I need to finish this before 5 PM.") is False
+    assert analyzer.is_historical_query("I like to work on AI.") is False
+    assert analyzer.is_historical_query("What is the state of this function?") is False
 
 
 def test_query_dimension_analyzer_decision_support_query():
@@ -76,18 +103,16 @@ def test_query_dimension_analyzer_decision_support_query():
     assert RetrievalDimension.DECISIONS in dimensions
     assert RetrievalDimension.PROJECTS in dimensions
     assert RetrievalDimension.GOALS in dimensions
-    assert RetrievalDimension.CONSTRAINTS in dimensions
-    assert RetrievalDimension.EMOTIONS in dimensions
 
 
 def test_query_dimension_analyzer_conversation_context():
     """Verify short-term conversation context enhances dimension detection."""
     analyzer = QueryDimensionAnalyzer()
     context = [
-        LLMMessage(role="user", content="I've been feeling stressed lately about deadlines."),
-        LLMMessage(role="assistant", content="Take care of your health."),
+        LLMMessage(role="user", content="I am feeling anxious about my upcoming presentation."),
+        LLMMessage(role="assistant", content="Take a deep breath."),
     ]
-    dimensions = analyzer.analyze_query("Is there anything I should adjust?", conversation_context=context)
+    dimensions = analyzer.analyze_query("How can I prepare better?", conversation_context=context)
     assert RetrievalDimension.EMOTIONS in dimensions
 
 
@@ -160,7 +185,7 @@ async def test_relevant_goal_and_project_retrieval(session_maker):
         )
 
         service = PersonalContextRetrievalService(embedding_provider=provider, experience_repo=repo)
-        context = await service.retrieve_context(user_id=user_id, query="What is my main career goal?")
+        context = await service.retrieve_context(user_id=user_id, query="What is my career goal?")
 
         assert not context.is_empty
         assert RetrievalDimension.GOALS in context.detected_dimensions
@@ -171,7 +196,42 @@ async def test_relevant_goal_and_project_retrieval(session_maker):
 
 
 # ==============================================================================
-# 3. Emotional Context Retrieval & Surfacing
+# 3. Semantic Retrieval Works When Dimensions are Empty
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_semantic_retrieval_works_when_dimensions_empty(session_maker):
+    """Requirement: When no dimension is detected, semantic vector search still retrieves relevant memories."""
+    user_id = uuid.uuid4()
+    provider = MockEmbeddingProvider(dimensions=1536)
+
+    async with session_maker() as session:
+        repo = SQLAlchemyExperienceRepository(session=session)
+
+        vec = await provider.embed("Python asyncio programming with task groups")
+        await repo.create(
+            Experience(
+                content="Learned Python asyncio task groups pattern",
+                source=ExperienceSource.CHAT,
+                user_id=str(user_id),
+                type=ExperienceType.FACT,
+                domain="skills",
+                embedding=vec,
+                embedding_status="COMPLETED",
+            )
+        )
+
+        service = PersonalContextRetrievalService(embedding_provider=provider, experience_repo=repo)
+        # Query has no dimension keywords
+        context = await service.retrieve_context(user_id=user_id, query="Python asyncio programming with task groups")
+
+        assert not context.is_empty
+        assert context.detected_dimensions == []
+        assert "asyncio task groups" in context.items[0].content
+
+
+# ==============================================================================
+# 4. Emotional Context Retrieval & Surfacing
 # ==============================================================================
 
 @pytest.mark.asyncio
@@ -226,7 +286,7 @@ async def test_emotional_context_retrieval_surfaces_all_attributes(session_maker
 
 
 # ==============================================================================
-# 4. Preference & Habit Retrieval
+# 5. Preference & Habit Retrieval
 # ==============================================================================
 
 @pytest.mark.asyncio
@@ -253,7 +313,7 @@ async def test_preference_and_habit_retrieval(session_maker):
         )
 
         service = PersonalContextRetrievalService(embedding_provider=provider, experience_repo=repo)
-        context = await service.retrieve_context(user_id=user_id, query="At what time do I go gym?")
+        context = await service.retrieve_context(user_id=user_id, query="At what time do I usually go to gym?")
 
         assert not context.is_empty
         assert RetrievalDimension.HABITS in context.detected_dimensions
@@ -261,12 +321,12 @@ async def test_preference_and_habit_retrieval(session_maker):
 
 
 # ==============================================================================
-# 5. Multi-Signal Bounded Context & Importance Weighting
+# 6. Multi-Signal Bounded Context & Simplified Ranking
 # ==============================================================================
 
 @pytest.mark.asyncio
 async def test_bounded_final_context_and_importance_weighting(session_maker):
-    """Requirement: Candidate limit and final limit are strictly enforced with importance ranking."""
+    """Requirement: Candidate limit and final limit are strictly enforced with similarity dominance."""
     user_id = uuid.uuid4()
     provider = MockEmbeddingProvider(dimensions=1536)
 
@@ -307,7 +367,7 @@ async def test_bounded_final_context_and_importance_weighting(session_maker):
 
 
 # ==============================================================================
-# 6. Lifecycle Filtering & Historical Memories
+# 7. Conservative Lifecycle Filtering & Historical Memories
 # ==============================================================================
 
 @pytest.mark.asyncio
@@ -355,14 +415,18 @@ async def test_lifecycle_filtering_active_vs_historical(session_maker):
         assert "Lives in Bangalore" in contents
         assert "Lived in London" not in contents
 
-        # Historical query -> Includes SUPERSEDED
+        # Conservative historical query -> Includes SUPERSEDED
         hist_context = await service.retrieve_context(user_id=user_id, query="Where did I live in the past?")
         hist_contents = [item.content for item in hist_context.items]
         assert "Lived in London" in hist_contents
 
+        # Explicit include_historical=True -> Includes SUPERSEDED
+        explicit_hist_context = await service.retrieve_context(user_id=user_id, query="Where do I live?", include_historical=True)
+        assert any(item.content == "Lived in London" for item in explicit_hist_context.items)
+
 
 # ==============================================================================
-# 7. Strict User Isolation
+# 8. Strict User Isolation
 # ==============================================================================
 
 @pytest.mark.asyncio
@@ -396,7 +460,7 @@ async def test_strict_user_isolation(session_maker):
 
 
 # ==============================================================================
-# 8. Legacy Experiences & Missing Fields Compatibility
+# 9. Legacy Experiences & Missing Fields Compatibility
 # ==============================================================================
 
 @pytest.mark.asyncio
@@ -432,7 +496,7 @@ async def test_legacy_experiences_compatibility(session_maker):
 
 
 # ==============================================================================
-# 9. PersonalContextBuilder XML Formatting & Safety Invariant
+# 10. PersonalContextBuilder XML Formatting & Safety Invariant
 # ==============================================================================
 
 def test_personal_context_builder_formatting():
@@ -468,8 +532,10 @@ def test_personal_context_builder_formatting():
 
     xml_str = builder.build_context(context)
     assert xml_str is not None
+    assert "<user_memory>" in xml_str
     assert "<personal_context>" in xml_str
     assert "</personal_context>" in xml_str
+    assert "</user_memory>" in xml_str
     assert "Identified Query Dimensions: PROJECTS, GOALS" in xml_str
     assert "Context Dimensions: PROJECTS" in xml_str
     assert "Emotion: excitement, Intensity: 0.8, Trigger: building AI memory" in xml_str
@@ -480,7 +546,7 @@ def test_personal_context_builder_formatting():
 
 
 # ==============================================================================
-# 10. ChatService Integration with PersonalContextRetrievalService
+# 11. ChatService Integration with PersonalContextRetrievalService
 # ==============================================================================
 
 @pytest.mark.asyncio
@@ -585,3 +651,86 @@ async def test_chat_service_fail_safe_on_retrieval_failure():
     )
 
     assert response.response == "General response without memory context."
+
+
+@pytest.mark.asyncio
+async def test_ranking_remains_dominated_by_similarity(session_maker):
+    """Requirement: Semantic similarity must remain the dominant ranking signal (e.g. 0.70 weight)."""
+    user_id = uuid.uuid4()
+    mock_repo = MagicMock(spec=SQLAlchemyExperienceRepository)
+    provider = MockEmbeddingProvider(dimensions=1536)
+
+    # Item A: High semantic similarity (0.95), no boosts (0.70 * 0.95 = 0.665)
+    exp_a = Experience(
+        id=uuid.uuid4(),
+        content="Direct semantic answer with high relevance",
+        source=ExperienceSource.CHAT,
+        user_id=str(user_id),
+        type=ExperienceType.FACT,
+        importance=ExperienceImportance.LOW,
+        created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+    )
+
+    # Item B: Moderate similarity (0.40), all boosts maxed (0.70 * 0.40 + 0.15 + 0.10 + 0.05 = 0.58)
+    exp_b = Experience(
+        id=uuid.uuid4(),
+        content="Wants to reach career goal",
+        source=ExperienceSource.CHAT,
+        user_id=str(user_id),
+        type=ExperienceType.GOAL,
+        importance=ExperienceImportance.HIGH,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    mock_repo.search_by_vector = AsyncMock(
+        return_value=[
+            (exp_a, 0.95),
+            (exp_b, 0.40),
+        ]
+    )
+
+    service = PersonalContextRetrievalService(embedding_provider=provider, experience_repo=mock_repo)
+    context = await service.retrieve_context(user_id=user_id, query="What is my goal?")
+
+    assert len(context.items) == 2
+    # Item A should be ranked #1 because similarity dominates all other combined boosts
+    assert context.items[0].content == exp_a.content
+    assert context.items[1].content == exp_b.content
+    assert context.items[0].score > context.items[1].score
+
+
+@pytest.mark.asyncio
+async def test_configurable_ranking_weights(session_maker):
+    """Requirement: Scoring weights must be configurable via settings."""
+    user_id = uuid.uuid4()
+    mock_repo = MagicMock(spec=SQLAlchemyExperienceRepository)
+    provider = MockEmbeddingProvider(dimensions=1536)
+
+    exp = Experience(
+        id=uuid.uuid4(),
+        content="Configurable weight test memory",
+        source=ExperienceSource.CHAT,
+        user_id=str(user_id),
+        type=ExperienceType.GOAL,
+        importance=ExperienceImportance.HIGH,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    mock_repo.search_by_vector = AsyncMock(return_value=[(exp, 1.0)])
+
+    # Test with custom settings: similarity=0.50, dimension=0.20, importance=0.20, recency=0.10
+    custom_settings = Settings(
+        personal_context_weight_similarity=0.50,
+        personal_context_weight_dimension=0.20,
+        personal_context_weight_importance=0.20,
+        personal_context_weight_recency=0.10,
+    )
+
+    with patch("personal_ai.application.memory.personal_context_service.get_settings", return_value=custom_settings):
+        service = PersonalContextRetrievalService(embedding_provider=provider, experience_repo=mock_repo)
+        context = await service.retrieve_context(user_id=user_id, query="My goals")
+
+        # 0.50 * 1.0 + 0.20 * 1.0 (goal query matches GOAL dimension) + 0.20 * 1.0 (HIGH) + 0.10 * 1.0 (recent) = 1.00
+        assert len(context.items) == 1
+        assert context.items[0].score == 1.0
+

@@ -6,70 +6,109 @@ from personal_ai.llm.models import LLMMessage
 
 
 class QueryDimensionAnalyzer:
-    """Lightweight, deterministic query and context dimension analyzer.
+    """Lightweight, high-precision deterministic query and context dimension analyzer.
 
-    Identifies relevant retrieval dimensions from user queries and short-term conversation context,
-    and maps domain Experience attributes to corresponding retrieval dimensions.
+    Uses high-confidence intent patterns to avoid false activations on ordinary language.
+    When no dimension is confidently detected, returns an empty list, allowing semantic vector
+    retrieval to serve as the primary mechanism.
     """
 
     _DIMENSION_PATTERNS = {
         RetrievalDimension.GOALS: [
-            r"\bgoal\b", r"\btarget\b", r"\baim\b", r"\baspire\b", r"\bambition\b",
-            r"\bachieve\b", r"\breach\b", r"\bwant to\b", r"\bplanning to\b",
-            r"\blpa\b", r"\bsalary\b", r"\baspiration\b", r"\bmilestone\b",
+            r"\b(my\s+)?(career\s+)?goals?\b",
+            r"\bwant\s+to\s+(reach|achieve|earn|make)\b",
+            r"\bplanning\s+to\s+(reach|achieve)\b",
+            r"\baspire\s+to\b",
+            r"\baim\s+to\b",
+            r"\b(salary|lpa)\s+(goal|target|expectation|reach)\b",
+            r"\bcareer\s+aspirations?\b",
         ],
         RetrievalDimension.PROJECTS: [
-            r"\bproject\b", r"\bbuild\b", r"\bbuilding\b", r"\bwork on\b", r"\bworking on\b",
-            r"\bapp\b", r"\bcodebase\b", r"\brepository\b", r"\brepo\b", r"\barchitecture\b",
-            r"\bfeature\b", r"\bsystem\b", r"\bsoftware\b", r"\bproduct\b",
+            r"\b(my\s+)?projects?\b",
+            r"\bworking\s+on\s+(the\s+|my\s+)?(project|app|codebase|system)\b",
+            r"\bsecond\s+brain\s+ai\b",
+            r"\b(project|codebase|repo|repository)\s+status\b",
+            r"\bbuilding\s+(the\s+|a\s+|my\s+)?(project|app|system|product)\b",
         ],
         RetrievalDimension.PREFERENCES: [
-            r"\bprefer\b", r"\bpreference\b", r"\blike\b", r"\bfavorite\b", r"\bfavourite\b",
-            r"\bdislike\b", r"\bhate\b", r"\blove\b", r"\benjoy\b", r"\bopt for\b",
-            r"\btaste\b", r"\bstyle\b", r"\bchoice of\b",
+            r"\b(my\s+)?preferences?\b",
+            r"\b(i\s+)?prefer\b",
+            r"\bfavorite\b",
+            r"\bfavourite\b",
+            r"\bwhat\s+do\s+i\s+like\b",
+            r"\bmy\s+favorite\b",
         ],
         RetrievalDimension.HABITS: [
-            r"\bhabit\b", r"\broutine\b", r"\busually\b", r"\boften\b", r"\bschedule\b",
-            r"\bdaily\b", r"\bgym\b", r"\btime do i\b", r"\bevery day\b", r"\balways\b",
-            r"\bnormally\b", r"\btypically\b", r"\bfrequency\b", r"\bworkout\b",
+            r"\b(my\s+)?habits?\b",
+            r"\b(daily|weekly)\s+routine\b",
+            r"\busually\s+(go|do|wake|sleep|eat|workout)\b",
+            r"\bwhat\s+time\s+do\s+i\b",
+            r"\b(my\s+)?schedule\b",
+            r"\bat\s+what\s+time\b",
         ],
         RetrievalDimension.RELATIONSHIPS: [
-            r"\bfriend\b", r"\bwife\b", r"\bhusband\b", r"\bmom\b", r"\bdad\b",
-            r"\bmother\b", r"\bfather\b", r"\bsister\b", r"\bbrother\b", r"\bcolleague\b",
-            r"\bmanager\b", r"\bboss\b", r"\bpartner\b", r"\blead\b", r"\bmentor\b",
-            r"\bfamily\b", r"\bteam\b", r"\bwho is\b", r"\bnames?\b",
+            r"\b(my\s+)?(sister|brother|mother|father|mom|dad|wife|husband|partner|boss|manager|colleague|mentor|coworker|friend)s?\b",
+            r"\bwho\s+is\s+my\b",
+            r"\bwhere\s+does\s+my\s+(sister|brother|friend|mom|dad|family)\b",
         ],
         RetrievalDimension.EMOTIONS: [
-            r"\bfeel\b", r"\bfeeling\b", r"\bafraid\b", r"\bscared\b", r"\bfear\b",
-            r"\banxious\b", r"\banxiety\b", r"\bnervous\b", r"\bfrustrated\b", r"\bstress\b",
-            r"\bstressed\b", r"\bexcited\b", r"\bhappy\b", r"\bsad\b", r"\bemotion\b",
-            r"\bdoubt\b", r"\boverwhelmed\b", r"\bupset\b", r"\bproud\b", r"\bmood\b",
+            r"\b(i\s+)?(feel|feeling|felt)\s+(scared|afraid|anxious|nervous|stressed|overwhelmed|happy|sad|frustrated|upset|excited|doubtful|confident)\b",
+            r"\b(my\s+)?(mood|emotions?)\b",
+            r"\bwhy\s+am\s+i\s+(anxious|stressed|scared|upset|frustrated|overwhelmed)\b",
+            r"\bhow\s+did\s+i\s+feel\b",
         ],
         RetrievalDimension.DECISIONS: [
-            r"\bdecide\b", r"\bdecision\b", r"\bchoice\b", r"\bchose\b", r"\bchosen\b",
-            r"\bshould i\b", r"\bwhether to\b", r"\bquit\b", r"\bswitch\b", r"\bopt\b",
-            r"\bcontinue\b", r"\btradeoff\b", r"\bverdict\b", r"\bweigh\b",
+            r"\bshould\s+i\s+(continue|quit|switch|stay|stop|start|proceed|choose|pick)\b",
+            r"\b(my\s+)?decisions?\b",
+            r"\bwhat\s+did\s+i\s+decide\b",
+            r"\bwhether\s+to\s+(continue|quit|switch|stay)\b",
         ],
         RetrievalDimension.CURRENT_STATE: [
-            r"\bcurrently\b", r"\bnow\b", r"\btoday\b", r"\btired\b", r"\bbusy\b",
-            r"\bexhausted\b", r"\bright now\b", r"\bhow am i\b", r"\bstate\b",
-            r"\bpresently\b", r"\bat the moment\b",
+            r"\bhow\s+am\s+i\s+(feeling|doing)\s+today\b",
+            r"\b(my\s+)?current\s+(state|condition|mood)\b",
+            r"\b(am\s+i|feeling)\s+(tired|busy|exhausted)\s+today\b",
+            r"\bhow\s+am\s+i\s+today\b",
         ],
         RetrievalDimension.CONSTRAINTS: [
-            r"\bcannot\b", r"\bmust not\b", r"\bconstraint\b", r"\blimitation\b",
-            r"\brestricted\b", r"\bbudget\b", r"\bdeadline\b", r"\bboundary\b",
-            r"\brule\b", r"\bblocker\b", r"\blimit\b", r"\bcant\b",
+            r"\b(my\s+)?(constraints?|limitations?)\b",
+            r"\bwhat\s+are\s+my\s+(limits|boundaries|restrictions)\b",
+            r"\bbudget\s+limit(ation)?\b",
         ],
         RetrievalDimension.PAST_EXPERIENCES: [
-            r"\bpast\b", r"\bearlier\b", r"\bremember when\b", r"\bhistory\b",
-            r"\bprevious\b", r"\bpreviously\b", r"\bused to\b", r"\bbefore\b",
-            r"\byesterday\b", r"\blast year\b", r"\blast week\b", r"\bformer\b",
+            r"\bwhat\s+happened\s+before\b",
+            r"\bwhat\s+did\s+i\s+say\s+previously\s+about\b",
+            r"\bremember\s+when\b",
+            r"\bwhat\s+was\s+i\s+doing\s+last\s+year\b",
+            r"\bin\s+the\s+past\b",
+            r"\bwhat\s+did\s+i\s+previously\b",
+            r"\bhistorically\b",
+            r"\bwhat\s+did\s+i\s+used?\s+to\b",
+            r"\bwhere\s+did\s+i\s+live\s+in\s+the\s+past\b",
+            r"\bwhat\s+used\s+to\s+be\s+my\b",
         ],
         RetrievalDimension.PERSONALITY: [
-            r"\bwho am i\b", r"\bmy name\b", r"\bwhere do i live\b", r"\bidentity\b",
-            r"\babout me\b", r"\bmy profile\b", r"\bmy background\b", r"\bwhere am i\b",
+            r"\bwho\s+am\s+i\b",
+            r"\bwhat\s+is\s+my\s+name\b",
+            r"\bwhere\s+do\s+i\s+live\b",
+            r"\bwhere\s+do\s+i\s+currently\s+live\b",
+            r"\babout\s+me\b",
+            r"\bmy\s+identity\b",
+            r"\bmy\s+background\b",
         ],
     }
+
+    _HISTORICAL_HIGH_CONFIDENCE_PATTERNS = [
+        r"\bwhat\s+happened\s+before\b",
+        r"\bwhat\s+did\s+i\s+say\s+previously\s+about\b",
+        r"\bremember\s+when\b",
+        r"\bwhat\s+was\s+i\s+doing\s+last\s+year\b",
+        r"\bin\s+the\s+past\b",
+        r"\bwhat\s+did\s+i\s+previously\b",
+        r"\bhistorically\b",
+        r"\bwhat\s+did\s+i\s+used?\s+to\b",
+        r"\bwhere\s+did\s+i\s+live\s+in\s+the\s+past\b",
+        r"\bwhat\s+used\s+to\s+be\s+my\b",
+    ]
 
     def analyze_query(
         self,
@@ -96,15 +135,20 @@ class QueryDimensionAnalyzer:
                     detected.add(dim)
                     break
 
-        # Decision support queries naturally cross-cut into goals, projects, emotions, and constraints
-        if RetrievalDimension.DECISIONS in detected:
-            if "project" in text_to_analyze or "work" in text_to_analyze:
-                detected.add(RetrievalDimension.PROJECTS)
-                detected.add(RetrievalDimension.GOALS)
-                detected.add(RetrievalDimension.CONSTRAINTS)
-                detected.add(RetrievalDimension.EMOTIONS)
+        # High-confidence multi-dimension activation for decision support queries
+        if RetrievalDimension.DECISIONS in detected and ("project" in text_to_analyze or "working on" in text_to_analyze):
+            detected.add(RetrievalDimension.PROJECTS)
+            detected.add(RetrievalDimension.GOALS)
 
         return sorted(list(detected), key=lambda d: d.value)
+
+    def is_historical_query(self, query: str) -> bool:
+        """Conservatively check if a query is a high-confidence historical inquiry."""
+        if not query or not query.strip():
+            return False
+
+        clean_text = query.lower().strip()
+        return any(re.search(pat, clean_text) for pat in self._HISTORICAL_HIGH_CONFIDENCE_PATTERNS)
 
     def match_experience_dimensions(self, experience: Experience) -> List[RetrievalDimension]:
         """Map an Experience domain entity's attributes to matching RetrievalDimensions."""

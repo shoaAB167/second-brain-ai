@@ -83,6 +83,11 @@ class PersonalContextRetrievalService:
         fin_limit = final_limit or settings.personal_context_final_limit
         threshold = similarity_threshold
 
+        w_sim = settings.personal_context_weight_similarity
+        w_dim = settings.personal_context_weight_dimension
+        w_imp = settings.personal_context_weight_importance
+        w_rec = settings.personal_context_weight_recency
+
         start_time = time.perf_counter()
 
         # Step 1: Detect relevant retrieval dimensions from query & short-term context
@@ -91,12 +96,12 @@ class PersonalContextRetrievalService:
             conversation_context=conversation_context,
         )
 
-        # Step 2: Determine lifecycle search policy
-        # If PAST_EXPERIENCES is detected or explicitly requested -> search across all lifecycle statuses
+        # Step 2: Conservative historical search policy
+        # Only search historical/superseded memories if explicitly requested or high-confidence historical query
         is_historical = (
             include_historical
             if include_historical is not None
-            else (RetrievalDimension.PAST_EXPERIENCES in detected_dimensions)
+            else self._dimension_analyzer.is_historical_query(query)
         )
         lifecycle_filter = None if is_historical else "ACTIVE"
 
@@ -134,69 +139,53 @@ class PersonalContextRetrievalService:
         total_candidates = len(scored_candidates)
 
         # Step 5: Multi-Signal Composite Scoring & Re-Ranking
+        # Dominant signal: semantic similarity (e.g. 70%), with small bounded boosts for dimension (15%), importance (10%), recency (5%)
         scored_items: List[PersonalContextItem] = []
         now = datetime.now(timezone.utc)
 
         for exp, similarity in scored_candidates:
             matched_dims = self._dimension_analyzer.match_experience_dimensions(exp)
 
-            # 1. Dimension match score
-            if not detected_dimensions:
-                dim_factor = 0.5
-            else:
-                overlap = len(set(detected_dimensions).intersection(set(matched_dims)))
-                if overlap > 0:
-                    dim_factor = min(1.0 + (0.2 * overlap), 1.6)
-                else:
-                    dim_factor = 0.2
+            # 1. Similarity score component
+            sim_val = max(0.0, min(similarity, 1.0))
 
-            # 2. Importance score
+            # 2. Dimension alignment boost (1.0 if matching detected dimension, else 0.0)
+            if detected_dimensions and set(detected_dimensions).intersection(set(matched_dims)):
+                dim_boost = 1.0
+            else:
+                dim_boost = 0.0
+
+            # 3. Importance boost (HIGH: 1.0, MEDIUM: 0.5, LOW: 0.0)
             imp_val = (
                 exp.importance.value if hasattr(exp.importance, "value") else str(exp.importance or "")
             ).upper()
             if imp_val == "HIGH":
-                imp_factor = 1.0
-            elif imp_val == "LOW":
-                imp_factor = 0.4
+                imp_boost = 1.0
+            elif imp_val == "MEDIUM":
+                imp_boost = 0.5
             else:
-                imp_factor = 0.7  # MEDIUM
+                imp_boost = 0.0  # LOW
 
-            # 3. Recency score (decay over days)
+            # 4. Recency boost (decay over time)
             if exp.created_at:
                 exp_dt = exp.created_at if exp.created_at.tzinfo else exp.created_at.replace(tzinfo=timezone.utc)
                 age_days = (now - exp_dt).total_seconds() / 86400.0
             else:
                 age_days = 0.0
-            if age_days <= 1.0:
-                rec_factor = 1.0
-            elif age_days <= 7.0:
-                rec_factor = 0.9
+
+            if age_days <= 7.0:
+                rec_boost = 1.0
             elif age_days <= 30.0:
-                rec_factor = 0.8
+                rec_boost = 0.5
             else:
-                rec_factor = 0.6
+                rec_boost = 0.0
 
-            # 4. Lifecycle status score
-            life_status_val = (
-                exp.lifecycle_status.value
-                if hasattr(exp.lifecycle_status, "value")
-                else str(exp.lifecycle_status or "")
-            ).upper()
-            if life_status_val == "ACTIVE":
-                life_factor = 1.0
-            elif is_historical:
-                life_factor = 0.8
-            else:
-                life_factor = 0.3
-
-            # Composite weighted score
-            # 50% Similarity + 25% Dimension alignment + 15% Importance + 5% Recency + 5% Lifecycle
+            # Simplified composite weighted score
             composite_score = (
-                (0.50 * max(0.0, min(similarity, 1.0)))
-                + (0.25 * (dim_factor / 1.6))
-                + (0.15 * imp_factor)
-                + (0.05 * rec_factor)
-                + (0.05 * life_factor)
+                (w_sim * sim_val)
+                + (w_dim * dim_boost)
+                + (w_imp * imp_boost)
+                + (w_rec * rec_boost)
             )
 
             exp_emo_dict = (
@@ -208,6 +197,12 @@ class PersonalContextRetrievalService:
                 [p.to_dict() if hasattr(p, "to_dict") else p for p in exp.people_involved]
                 if exp.people_involved
                 else None
+            )
+
+            life_status_val = (
+                exp.lifecycle_status.value
+                if hasattr(exp.lifecycle_status, "value")
+                else (str(exp.lifecycle_status) if exp.lifecycle_status else "ACTIVE")
             )
 
             scored_items.append(

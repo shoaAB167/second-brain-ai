@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     personal_context_candidate_limit: int = 15
     personal_context_final_limit: int = 5
     personal_context_similarity_threshold: float = 0.3
+    personal_context_weight_similarity: float = 0.70
+    personal_context_weight_dimension: float = 0.15
+    personal_context_weight_importance: float = 0.10
+    personal_context_weight_recency: float = 0.05
 
     # Memory Evolution Settings
     memory_evolution_enabled: bool = True
