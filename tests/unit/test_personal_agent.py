@@ -56,7 +56,7 @@ class DummyLLMClient(LLMClient):
 
 
 # ==============================================================================
-# 1. Response Mode Determination Tests
+# 1. Response Mode Determination & Precedence Tests
 # ==============================================================================
 
 def test_determine_response_mode_direct_answer():
@@ -103,34 +103,19 @@ def test_determine_response_mode_personalized_response():
 
 
 def test_determine_response_mode_emotional_support():
-    """Requirement: Emotional expressions determine EMOTIONAL_SUPPORT mode."""
+    """Requirement: Explicit emotional distress/expression in current message determines EMOTIONAL_SUPPORT mode."""
     llm = DummyLLMClient()
     agent = PersonalAgent(llm_client=llm)
 
-    # Query matching emotional patterns
-    request1 = AgentRequest(
+    request = AgentRequest(
         current_message="I'm feeling really demotivated today.",
         user_id=uuid.uuid4(),
     )
-    assert agent.determine_response_mode(request1) == ResponseMode.EMOTIONAL_SUPPORT
-
-    # Query with context containing EMOTIONS dimension
-    context = PersonalContext(
-        user_id=uuid.uuid4(),
-        query="I feel anxious about my job interview.",
-        detected_dimensions=[RetrievalDimension.EMOTIONS],
-        items=[],
-    )
-    request2 = AgentRequest(
-        current_message="I feel anxious about my job interview.",
-        user_id=uuid.uuid4(),
-        personal_context=context,
-    )
-    assert agent.determine_response_mode(request2) == ResponseMode.EMOTIONAL_SUPPORT
+    assert agent.determine_response_mode(request) == ResponseMode.EMOTIONAL_SUPPORT
 
 
 def test_determine_response_mode_decision_support():
-    """Requirement: Decision-making queries determine DECISION_SUPPORT mode."""
+    """Requirement: Explicit decision inquiries determine DECISION_SUPPORT mode."""
     llm = DummyLLMClient()
     agent = PersonalAgent(llm_client=llm)
 
@@ -139,19 +124,6 @@ def test_determine_response_mode_decision_support():
         user_id=uuid.uuid4(),
     )
     assert agent.determine_response_mode(request) == ResponseMode.DECISION_SUPPORT
-
-
-def test_determine_response_mode_clarification():
-    """Requirement: Underspecified/ambiguous queries without context determine CLARIFICATION mode."""
-    llm = DummyLLMClient()
-    agent = PersonalAgent(llm_client=llm)
-
-    request = AgentRequest(
-        current_message="I want to do that.",
-        user_id=uuid.uuid4(),
-        conversation_history=[],
-    )
-    assert agent.determine_response_mode(request) == ResponseMode.CLARIFICATION
 
 
 def test_determine_response_mode_general_guidance():
@@ -167,7 +139,199 @@ def test_determine_response_mode_general_guidance():
 
 
 # ==============================================================================
-# 2. Agent Execution & Context Safety Tests
+# 2. Response Mode Precedence Regression Tests (PR #19 Review)
+# ==============================================================================
+
+def test_response_mode_precedence_emotional_context_with_factual_query():
+    """Requirement: Factual query with emotional PersonalContext must NOT trigger EMOTIONAL_SUPPORT."""
+    llm = DummyLLMClient()
+    agent = PersonalAgent(llm_client=llm)
+
+    emotional_context = PersonalContext(
+        user_id=uuid.uuid4(),
+        query="What happened with my interview last month?",
+        detected_dimensions=[RetrievalDimension.EMOTIONS, RetrievalDimension.PAST_EXPERIENCES],
+        items=[
+            PersonalContextItem(
+                experience_id=uuid.uuid4(),
+                content="Failed an AI technical interview and felt anxious",
+                type="EVENT",
+                domain="career",
+                score=0.92,
+                emotional_context={"emotion": "fear", "intensity": 0.8},
+            )
+        ],
+    )
+
+    request = AgentRequest(
+        current_message="What happened with my interview last month?",
+        user_id=uuid.uuid4(),
+        personal_context=emotional_context,
+    )
+    mode = agent.determine_response_mode(request)
+    # Must be PERSONALIZED_RESPONSE, NOT EMOTIONAL_SUPPORT
+    assert mode == ResponseMode.PERSONALIZED_RESPONSE
+    assert mode != ResponseMode.EMOTIONAL_SUPPORT
+
+
+def test_response_mode_precedence_decision_context_with_historical_query():
+    """Requirement: Historical query with decision PersonalContext must NOT trigger DECISION_SUPPORT."""
+    llm = DummyLLMClient()
+    agent = PersonalAgent(llm_client=llm)
+
+    decision_context = PersonalContext(
+        user_id=uuid.uuid4(),
+        query="What did I decide last week?",
+        detected_dimensions=[RetrievalDimension.DECISIONS],
+        items=[
+            PersonalContextItem(
+                experience_id=uuid.uuid4(),
+                content="Decided to focus on AI engineering over frontend",
+                type="DECISION",
+                domain="career",
+                score=0.95,
+            )
+        ],
+    )
+
+    request = AgentRequest(
+        current_message="What did I decide last week?",
+        user_id=uuid.uuid4(),
+        personal_context=decision_context,
+    )
+    mode = agent.determine_response_mode(request)
+    # Must be PERSONALIZED_RESPONSE, NOT DECISION_SUPPORT
+    assert mode == ResponseMode.PERSONALIZED_RESPONSE
+    assert mode != ResponseMode.DECISION_SUPPORT
+
+
+def test_response_mode_precedence_emotional_query_without_emotional_context():
+    """Requirement: Explicit emotional expression without emotional PersonalContext triggers EMOTIONAL_SUPPORT."""
+    llm = DummyLLMClient()
+    agent = PersonalAgent(llm_client=llm)
+
+    request = AgentRequest(
+        current_message="I'm feeling low again.",
+        user_id=uuid.uuid4(),
+        personal_context=None,
+    )
+    assert agent.determine_response_mode(request) == ResponseMode.EMOTIONAL_SUPPORT
+
+
+def test_response_mode_precedence_decision_query_without_decision_context():
+    """Requirement: Explicit decision question without decision PersonalContext triggers DECISION_SUPPORT."""
+    llm = DummyLLMClient()
+    agent = PersonalAgent(llm_client=llm)
+
+    request = AgentRequest(
+        current_message="Should I focus on DSA or AI?",
+        user_id=uuid.uuid4(),
+        personal_context=None,
+    )
+    assert agent.determine_response_mode(request) == ResponseMode.DECISION_SUPPORT
+
+
+def test_response_mode_precedence_personalization_query_with_relevant_context():
+    """Requirement: Query about user's background/goals with PersonalContext triggers PERSONALIZED_RESPONSE."""
+    llm = DummyLLMClient()
+    agent = PersonalAgent(llm_client=llm)
+
+    context = PersonalContext(
+        user_id=uuid.uuid4(),
+        query="What are my career goals?",
+        detected_dimensions=[RetrievalDimension.GOALS],
+        items=[
+            PersonalContextItem(
+                experience_id=uuid.uuid4(),
+                content="Goal is to reach 30 LPA as an AI architect",
+                type="GOAL",
+                domain="career",
+                score=0.98,
+            )
+        ],
+    )
+
+    request = AgentRequest(
+        current_message="What are my career goals?",
+        user_id=uuid.uuid4(),
+        personal_context=context,
+    )
+    assert agent.determine_response_mode(request) == ResponseMode.PERSONALIZED_RESPONSE
+
+
+# ==============================================================================
+# 3. Clarification Detection Tests (PR #19 Review)
+# ==============================================================================
+
+@pytest.mark.parametrize(
+    "ambiguous_msg",
+    [
+        "Do that.",
+        "What about that?",
+        "Let's do it.",
+        "Tell me more about that.",
+        "I want to do that.",
+        "How to do it?",
+    ],
+)
+def test_clarification_triggers_when_no_useful_preceding_context(ambiguous_msg: str):
+    """Requirement: Ambiguous follow-up with no preceding context or generic greeting triggers CLARIFICATION."""
+    llm = DummyLLMClient()
+    agent = PersonalAgent(llm_client=llm)
+
+    # 1. Empty conversation history
+    request_empty = AgentRequest(
+        current_message=ambiguous_msg,
+        user_id=uuid.uuid4(),
+        conversation_history=[],
+    )
+    assert agent.determine_response_mode(request_empty) == ResponseMode.CLARIFICATION
+
+    # 2. Generic greeting / uninformative preceding history
+    request_greeting = AgentRequest(
+        current_message=ambiguous_msg,
+        user_id=uuid.uuid4(),
+        conversation_history=[
+            LLMMessage(role="assistant", content="Hello! How can I help you today?")
+        ],
+    )
+    assert agent.determine_response_mode(request_greeting) == ResponseMode.CLARIFICATION
+
+
+@pytest.mark.parametrize(
+    "ambiguous_msg",
+    [
+        "Do that.",
+        "What about that?",
+        "Let's do it.",
+        "Tell me more about that.",
+    ],
+)
+def test_clarification_does_not_trigger_when_preceding_context_is_resolvable(ambiguous_msg: str):
+    """Requirement: Ambiguous follow-up with concrete resolvable preceding proposal does NOT trigger CLARIFICATION."""
+    llm = DummyLLMClient()
+    agent = PersonalAgent(llm_client=llm)
+
+    # Preceding assistant message proposed a concrete technical plan
+    history = [
+        LLMMessage(role="user", content="How can we optimize vector search in PostgreSQL?"),
+        LLMMessage(
+            role="assistant",
+            content="I recommend creating an HNSW cosine index on the embedding column with m=16 and ef_construction=64.",
+        ),
+    ]
+
+    request = AgentRequest(
+        current_message=ambiguous_msg,
+        user_id=uuid.uuid4(),
+        conversation_history=history,
+    )
+    mode = agent.determine_response_mode(request)
+    assert mode != ResponseMode.CLARIFICATION
+
+
+# ==============================================================================
+# 4. Agent Execution & Context Safety Tests
 # ==============================================================================
 
 @pytest.mark.asyncio

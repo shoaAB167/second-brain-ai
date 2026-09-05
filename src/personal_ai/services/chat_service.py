@@ -82,8 +82,6 @@ class ChatService:
         else:
             raise ValueError("Either personal_agent or llm_client must be provided to ChatService.")
 
-        self._llm_client = llm_client or getattr(self._personal_agent, "_llm_client", None)
-
     async def _retrieve_personal_context(
         self,
         user_id: Optional[uuid.UUID],

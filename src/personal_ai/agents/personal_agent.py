@@ -28,8 +28,8 @@ class PersonalAgent:
     """
 
     _CLARIFICATION_PATTERNS = [
-        r"^(i\s+want\s+to\s+do\s+that|do\s+it|let'?s\s+do\s+(it|that)|what\s+about\s+that\??|how\s+to\s+do\s+it\??|tell\s+me\s+more\s+about\s+that\??|can\s+we\s+do\s+that\??|do\s+that\??)$",
-        r"^(what\s+next\??|then\s+what\??|and\s+then\??)$",
+        r"^(do\s+(that|it)|let'?s\s+do\s+(it|that)|i\s+want\s+to\s+do\s+that|what\s+about\s+that|tell\s+me\s+more\s+about\s+that|how\s+to\s+do\s+it|can\s+we\s+do\s+that)$",
+        r"^(what\s+next|then\s+what|and\s+then)$",
     ]
 
     _EMOTIONAL_PATTERNS = [
@@ -46,7 +46,9 @@ class PersonalAgent:
     ]
 
     _PERSONALIZED_PATTERNS = [
-        r"\b(my\s+(goals?|routine|schedule|habits?|projects?|preferences?|career|background|life|plan))\b",
+        r"\b(my\s+(goals?|routine|schedule|habits?|projects?|preferences?|career|background|life|plan|interview|decision|feedback))\b",
+        r"\bwhat\s+happened\s+(with|to|in|at)\b",
+        r"\bwhat\s+did\s+i\s+(decide|say|do|choose|write|learn|tell)\b",
         r"\bi\s+usually\s+struggle\b",
         r"\bhow\s+should\s+i\s+structure\s+my\b",
         r"\bwhat\s+are\s+my\b",
@@ -71,58 +73,68 @@ class PersonalAgent:
         self._llm_client = llm_client
         self._context_builder = context_builder or PersonalContextBuilder()
 
+    def _has_resolvable_context(self, history: List[LLMMessage]) -> bool:
+        """Check if conversation history provides sufficient concrete context to resolve anaphoric references."""
+        if not history:
+            return False
+
+        last_msg = history[-1]
+        content = last_msg.content.strip().lower()
+
+        # Generic greetings or open-ended prompts do not provide resolvable referents
+        generic_patterns = [
+            r"^(hi|hello|hey|greetings|howdy)[!.,?\s]*$",
+            r"\bhow\s+can\s+i\s+help\b",
+            r"\bwhat\s+can\s+i\s+do\s+for\s+you\b",
+            r"\bwhat\s+would\s+you\s+like\b",
+            r"\banything\s+i\s+can\s+help\b",
+        ]
+        if any(re.search(p, content) for p in generic_patterns):
+            stripped = re.sub(
+                r"\b(hi|hello|hey|greetings|howdy|how\s+can\s+i\s+help(\s+you)?(\s+today)?|what\s+can\s+i\s+do\s+for\s+you|what\s+would\s+you\s+like\s+to\s+discuss)\b",
+                "",
+                content,
+            )
+            if len(stripped.strip()) < 10:
+                return False
+
+        # If previous message has substantive technical/concrete content
+        return len(content.split()) >= 4
+
     def determine_response_mode(self, request: AgentRequest) -> ResponseMode:
         """Deterministically determine the most appropriate ResponseMode for the request.
 
-        Evaluates query intent, conversation history context, and retrieved personal context dimensions.
-        Avoids unnecessary LLM classification roundtrips.
+        The user's CURRENT MESSAGE / explicit intent is the primary determinant of response mode.
+        PersonalContext informs generation but does not turn factual/historical queries into emotional
+        or decision support.
         """
         clean_msg = re.sub(r"[.!?]+$", "", request.current_message.strip().lower())
 
-        # 1. Check for ambiguous/underspecified query requiring clarification
-        # (when no conversation history exists to resolve the referent or message is explicitly vague)
-        for pat in self._CLARIFICATION_PATTERNS:
-            if re.search(pat, clean_msg):
-                if not request.conversation_history:
-                    return ResponseMode.CLARIFICATION
-                # If history exists, check if last turn clarifies it; if not, ask clarification
-                last_msg = request.conversation_history[-1].content.strip().lower()
-                if len(last_msg) < 5 or "what would you like" in last_msg:
-                    return ResponseMode.CLARIFICATION
-
-        # 2. Check for emotional support intent
-        if request.personal_context and RetrievalDimension.EMOTIONS in request.personal_context.detected_dimensions:
-            return ResponseMode.EMOTIONAL_SUPPORT
+        # 1. Explicit emotional support intent in the current message
         for pat in self._EMOTIONAL_PATTERNS:
             if re.search(pat, clean_msg):
                 return ResponseMode.EMOTIONAL_SUPPORT
 
-        # 3. Check for decision support intent
-        if request.personal_context and RetrievalDimension.DECISIONS in request.personal_context.detected_dimensions:
-            return ResponseMode.DECISION_SUPPORT
+        # 2. Explicit decision support intent in the current message
         for pat in self._DECISION_PATTERNS:
             if re.search(pat, clean_msg):
                 return ResponseMode.DECISION_SUPPORT
 
-        # 4. Check for personalized response intent
-        if request.personal_context and not request.personal_context.is_empty:
-            personal_dims = {
-                RetrievalDimension.GOALS,
-                RetrievalDimension.PROJECTS,
-                RetrievalDimension.PREFERENCES,
-                RetrievalDimension.HABITS,
-                RetrievalDimension.PERSONALITY,
-                RetrievalDimension.CURRENT_STATE,
-                RetrievalDimension.PAST_EXPERIENCES,
-            }
-            if set(request.personal_context.detected_dimensions).intersection(personal_dims):
-                return ResponseMode.PERSONALIZED_RESPONSE
+        # 3. Ambiguous / underspecified follow-up queries without resolvable preceding context
+        for pat in self._CLARIFICATION_PATTERNS:
+            if re.search(pat, clean_msg):
+                if not self._has_resolvable_context(request.conversation_history):
+                    return ResponseMode.CLARIFICATION
 
+        # 4. Explicit personalized query intent or available PersonalContext memories
         for pat in self._PERSONALIZED_PATTERNS:
             if re.search(pat, clean_msg):
                 return ResponseMode.PERSONALIZED_RESPONSE
 
-        # 5. Check for general guidance intent
+        if request.personal_context and not request.personal_context.is_empty:
+            return ResponseMode.PERSONALIZED_RESPONSE
+
+        # 5. General guidance intent
         for pat in self._GENERAL_GUIDANCE_PATTERNS:
             if re.search(pat, clean_msg):
                 return ResponseMode.GENERAL_GUIDANCE
