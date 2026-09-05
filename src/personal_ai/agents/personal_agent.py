@@ -1,3 +1,4 @@
+import json
 import re
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
@@ -5,7 +6,7 @@ from personal_ai.application.memory.personal_context_builder import PersonalCont
 from personal_ai.core.logger import get_logger
 from personal_ai.domain.agent import AgentDecision, AgentRequest, ResponseMode
 from personal_ai.domain.experience import RetrievalDimension
-from personal_ai.domain.tool import ToolDefinition, ToolResult
+from personal_ai.domain.tool import ToolDefinition, ToolExecutionContext, ToolResult
 from personal_ai.llm.client import LLMClient
 from personal_ai.llm.models import LLMMessage, LLMStreamChunk
 from personal_ai.tools.registry import ToolRegistry
@@ -90,19 +91,25 @@ class PersonalAgent:
             return self._tool_registry.list_definitions()
         return []
 
-    async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> ToolResult:
+    async def execute_tool(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        context: Optional[ToolExecutionContext] = None,
+    ) -> ToolResult:
         """Safely execute a registered tool via the agent's ToolRegistry.
 
         Guarantees that tool execution only happens through explicitly registered capabilities
-        and never via arbitrary functions or passive memory text.
+        and passes application-controlled execution context (e.g. authenticated user_id).
         """
         if self._tool_registry is None:
             logger.warning("Tool execution rejected: no ToolRegistry configured [tool=%s]", name)
             return ToolResult(
                 success=False,
                 error="No ToolRegistry configured on PersonalAgent.",
+                metadata={"tool_name": name},
             )
-        return await self._tool_registry.execute_tool(name, arguments)
+        return await self._tool_registry.execute_tool(name, arguments, context=context)
 
     def _has_resolvable_context(self, history: List[LLMMessage]) -> bool:
         """Check if conversation history provides sufficient concrete context to resolve anaphoric references."""
@@ -259,6 +266,8 @@ class PersonalAgent:
     ) -> AgentDecision:
         """Orchestrate response generation for the given AgentRequest.
 
+        Supports at most ONE structured tool call execution per request (PR #21).
+
         Args:
             request: AgentRequest containing current message, user_id, history, and context.
             **kwargs: Optional LLM execution hyperparameters.
@@ -274,9 +283,99 @@ class PersonalAgent:
         )
 
         messages = self._build_prompt_messages(request, response_mode)
-        llm_response = await self._llm_client.generate_response(messages=messages, **kwargs)
+        available_tools = self.get_available_tools()
+
+        llm_response = await self._llm_client.generate_response(
+            messages=messages,
+            tools=available_tools if available_tools else None,
+            **kwargs,
+        )
 
         context_count = len(request.personal_context.items) if request.personal_context else 0
+
+        # Handle at most ONE structured tool call (PR #21 single-call policy)
+        if llm_response.tool_calls:
+            tool_call = llm_response.tool_calls[0]
+            logger.info(
+                "PersonalAgent executing structured tool call [tool=%s, user_id=%s]",
+                tool_call.name,
+                request.user_id,
+            )
+
+            context = (
+                ToolExecutionContext(user_id=request.user_id)
+                if request.user_id
+                else None
+            )
+
+            tool_result = await self.execute_tool(
+                name=tool_call.name,
+                arguments=tool_call.arguments,
+                context=context,
+            )
+
+            # Build follow-up messages incorporating the tool result for final response
+            followup_messages = list(messages)
+            assistant_content = (
+                llm_response.content
+                if llm_response.content
+                else f"Calling tool '{tool_call.name}'."
+            )
+            followup_messages.append(
+                LLMMessage(role="assistant", content=assistant_content)
+            )
+
+            tool_payload = (
+                tool_result.output
+                if tool_result.success
+                else {"error": tool_result.error}
+            )
+            followup_messages.append(
+                LLMMessage(
+                    role="user",
+                    content=f"[Tool Result for {tool_call.name}]:\n{json.dumps(tool_payload)}",
+                )
+            )
+
+            # Final LLM generation pass without tools (enforcing single-call limit)
+            final_response = await self._llm_client.generate_response(
+                messages=followup_messages,
+                tools=None,
+                **kwargs,
+            )
+
+            total_latency = round(llm_response.latency_ms + final_response.latency_ms, 2)
+            prompt_tokens = (llm_response.prompt_tokens or 0) + (final_response.prompt_tokens or 0)
+            completion_tokens = (llm_response.completion_tokens or 0) + (final_response.completion_tokens or 0)
+            total_tokens = (llm_response.total_tokens or 0) + (final_response.total_tokens or 0)
+
+            return AgentDecision(
+                response_mode=response_mode,
+                content=final_response.content,
+                provider=final_response.provider,
+                model=final_response.model,
+                latency_ms=total_latency,
+                prompt_tokens=prompt_tokens if prompt_tokens > 0 else None,
+                completion_tokens=completion_tokens if completion_tokens > 0 else None,
+                total_tokens=total_tokens if total_tokens > 0 else None,
+                metadata={
+                    "response_mode": response_mode.value,
+                    "applied_context_count": context_count,
+                    "tool_invocations": [
+                        {
+                            "name": tool_call.name,
+                            "arguments": tool_call.arguments,
+                            "success": tool_result.success,
+                            "permission": (
+                                tool_result.metadata.get("permission")
+                                if tool_result.metadata
+                                else None
+                            ),
+                        }
+                    ],
+                },
+                raw_response=final_response,
+            )
 
         return AgentDecision(
             response_mode=response_mode,
