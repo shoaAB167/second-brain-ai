@@ -6,7 +6,7 @@ from personal_ai.domain.tool import (
     ToolPermission,
     ToolResult,
 )
-from personal_ai.tools.registry import ToolRegistry
+from personal_ai.tools.registry import ToolRegistry, create_tool_registry
 
 __all__ = [
     "BaseTool",
@@ -14,4 +14,5 @@ __all__ = [
     "ToolPermission",
     "ToolRegistry",
     "ToolResult",
+    "create_tool_registry",
 ]

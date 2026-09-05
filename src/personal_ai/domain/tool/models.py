@@ -46,19 +46,23 @@ class ToolDefinition:
 class BaseTool(ABC):
     """Abstract base class representing a controlled capability.
 
-    Provides declarative input schema validation, safety categorization,
-    and safe execution wrapping.
+    Provides declarative Pydantic input schema validation, safety categorization,
+    and safe execution wrapping. All concrete tools must declare a Pydantic input_schema
+    subclassing BaseModel (use an empty BaseModel for zero-input tools).
     """
 
     name: str
     description: str
     permission: ToolPermission = ToolPermission.READ_ONLY
-    input_schema: Optional[Type[BaseModel]] = None
+    input_schema: Type[BaseModel]
 
     def get_definition(self) -> ToolDefinition:
         """Return the public ToolDefinition without exposing internal implementation details."""
-        schema: Dict[str, Any]
-        if self.input_schema is not None:
+        if (
+            self.input_schema is not None
+            and isinstance(self.input_schema, type)
+            and issubclass(self.input_schema, BaseModel)
+        ):
             schema = self.input_schema.model_json_schema()
         else:
             schema = {"type": "object", "properties": {}}
@@ -71,7 +75,7 @@ class BaseTool(ABC):
         )
 
     def validate_arguments(self, arguments: Any) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
-        """Validate input arguments against declared input_schema.
+        """Validate input arguments against declared Pydantic input_schema.
 
         Returns:
             Tuple of (is_valid, error_message, validated_kwargs_dict).
@@ -83,8 +87,16 @@ class BaseTool(ABC):
                 None,
             )
 
-        if self.input_schema is None:
-            return True, None, arguments
+        if (
+            self.input_schema is None
+            or not isinstance(self.input_schema, type)
+            or not issubclass(self.input_schema, BaseModel)
+        ):
+            return (
+                False,
+                f"Tool '{self.name}' must declare a valid Pydantic BaseModel as its input_schema.",
+                None,
+            )
 
         try:
             validated_model = self.input_schema.model_validate(arguments)
@@ -101,9 +113,10 @@ class BaseTool(ABC):
                 None,
             )
         except Exception as exc:
+            logger.error("Unexpected validation exception for tool '%s': %s", self.name, exc, exc_info=True)
             return (
                 False,
-                f"Argument validation failed for tool '{self.name}': {str(exc)}",
+                f"Argument validation failed for tool '{self.name}'.",
                 None,
             )
 
@@ -115,7 +128,8 @@ class BaseTool(ABC):
     async def execute(self, arguments: Dict[str, Any]) -> ToolResult:
         """Execute the tool with argument validation and exception safety wrapping.
 
-        Guarantees that raw exceptions are caught and returned as structured ToolResult failures.
+        Guarantees that raw exceptions are caught, logged with stack trace,
+        and returned as a safe generic ToolResult failure without leaking internal details.
         """
         is_valid, error_msg, validated_kwargs = self.validate_arguments(arguments)
         if not is_valid:
@@ -145,6 +159,6 @@ class BaseTool(ABC):
             logger.error("Error during tool execution [tool=%s]: %s", self.name, exc, exc_info=True)
             return ToolResult(
                 success=False,
-                error=f"Tool execution failed for '{self.name}': {str(exc)}",
+                error="Tool execution failed.",
                 metadata={"tool_name": self.name, "permission": self.permission.value},
             )

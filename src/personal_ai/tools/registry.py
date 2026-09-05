@@ -1,5 +1,7 @@
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel
+
 from personal_ai.core.logger import get_logger
 from personal_ai.domain.tool import BaseTool, ToolDefinition, ToolResult
 
@@ -11,9 +13,10 @@ class ToolRegistry:
 
     Invariants:
     - Duplicate tool registrations are strictly rejected.
+    - All registered tools must declare a valid Pydantic BaseModel input_schema.
     - Unknown or unregistered tools fail safely with structured ToolResult.
     - Never executes unregistered capabilities or raw functions.
-    - Preserves provider-agnostic, deterministic lookup.
+    - Preserves provider-agnostic, deterministic lookup and permission metadata.
     """
 
     def __init__(self, tools: Optional[List[BaseTool]] = None) -> None:
@@ -30,18 +33,22 @@ class ToolRegistry:
             tool: BaseTool instance to register.
 
         Raises:
-            TypeError: If the tool is not an instance of BaseTool.
+            TypeError: If the tool is not an instance of BaseTool or lacks a valid Pydantic input_schema.
             ValueError: If the tool name is empty or already registered.
         """
         if not isinstance(tool, BaseTool):
             raise TypeError(f"Expected BaseTool instance, received {type(tool).__name__}.")
 
-        name = tool.name.strip() if tool.name else ""
+        name = tool.name.strip() if getattr(tool, "name", None) else ""
         if not name:
             raise ValueError("Tool name must be a non-empty string.")
 
         if name in self._tools:
             raise ValueError(f"Tool with name '{name}' is already registered in ToolRegistry.")
+
+        schema = getattr(tool, "input_schema", None)
+        if schema is None or not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+            raise TypeError(f"Tool '{name}' must declare a valid Pydantic BaseModel as its input_schema.")
 
         self._tools[name] = tool
         logger.info(
@@ -84,6 +91,7 @@ class ToolRegistry:
         """Safely execute a registered tool by name with arguments.
 
         Unknown or unregistered tools return a structured ToolResult failure.
+        Internal execution exceptions return a safe generic failure without leaking stack traces.
 
         Args:
             name: Tool name to execute.
@@ -98,6 +106,7 @@ class ToolRegistry:
             return ToolResult(
                 success=False,
                 error=f"Tool '{name}' is not registered in the ToolRegistry.",
+                metadata={"tool_name": name},
             )
 
         try:
@@ -106,5 +115,17 @@ class ToolRegistry:
             logger.error("Unexpected failure executing tool [name=%s]: %s", name, exc, exc_info=True)
             return ToolResult(
                 success=False,
-                error=f"Unexpected error executing tool '{name}': {str(exc)}",
+                error="Tool execution failed.",
+                metadata={"tool_name": name, "permission": tool.permission.value},
             )
+
+
+def create_tool_registry() -> ToolRegistry:
+    """Factory function constructing and configuring the production ToolRegistry.
+
+    Serves as the explicit composition boundary for registering approved capabilities
+    and preparing for future tool integrations (PR #21).
+    """
+    registry = ToolRegistry()
+    # Explicit composition boundary: future approved tools will be registered here
+    return registry
