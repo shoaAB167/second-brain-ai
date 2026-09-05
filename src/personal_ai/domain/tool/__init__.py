@@ -3,6 +3,7 @@
 from personal_ai.domain.tool.models import (
     BaseTool,
     ToolDefinition,
+    ToolExecutionContext,
     ToolPermission,
     ToolResult,
 )
@@ -10,6 +11,7 @@ from personal_ai.domain.tool.models import (
 __all__ = [
     "BaseTool",
     "ToolDefinition",
+    "ToolExecutionContext",
     "ToolPermission",
     "ToolResult",
 ]
