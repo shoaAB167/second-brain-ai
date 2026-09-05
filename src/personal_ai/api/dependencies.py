@@ -30,6 +30,7 @@ from personal_ai.infrastructure.embedding import (
 )
 from personal_ai.llm import LLMClient, get_llm_client
 from personal_ai.services.chat_service import ChatService
+from personal_ai.tools import ToolRegistry
 
 security = HTTPBearer(auto_error=False)
 
@@ -77,11 +78,17 @@ def get_personal_context_retrieval_service(
     )
 
 
+def get_tool_registry() -> ToolRegistry:
+    """Dependency provider constructing ToolRegistry instance."""
+    return ToolRegistry()
+
+
 def get_personal_agent(
     llm_client: LLMClient = Depends(get_llm_client),
+    tool_registry: ToolRegistry = Depends(get_tool_registry),
 ) -> PersonalAgent:
-    """Dependency provider constructing PersonalAgent instance."""
-    return PersonalAgent(llm_client=llm_client)
+    """Dependency provider constructing PersonalAgent instance with LLMClient and ToolRegistry."""
+    return PersonalAgent(llm_client=llm_client, tool_registry=tool_registry)
 
 
 async def get_chat_service(
