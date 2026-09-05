@@ -109,10 +109,11 @@ async def test_chat_service_reuses_existing_conversation(db_session: AsyncSessio
     mock_llm_client.generate_response.assert_called_once()
     passed_messages = mock_llm_client.generate_response.call_args.kwargs["messages"]
 
-    assert len(passed_messages) == 3
-    assert passed_messages[0] == LLMMessage(role="user", content="Hi")
-    assert passed_messages[1] == LLMMessage(role="assistant", content="Hello!")
-    assert passed_messages[2] == LLMMessage(role="user", content="How are you?")
+    user_assistant_messages = [m for m in passed_messages if m.role != "system"]
+    assert len(user_assistant_messages) == 3
+    assert user_assistant_messages[0] == LLMMessage(role="user", content="Hi")
+    assert user_assistant_messages[1] == LLMMessage(role="assistant", content="Hello!")
+    assert user_assistant_messages[2] == LLMMessage(role="user", content="How are you?")
 
     # Verify 4 messages in DB now
     messages = await repo.get_conversation_messages(conversation.id)

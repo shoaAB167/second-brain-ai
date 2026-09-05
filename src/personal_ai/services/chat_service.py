@@ -2,6 +2,7 @@ import asyncio
 from typing import Any, AsyncGenerator, List, Optional, Union
 import uuid
 
+from personal_ai.agents.personal_agent import PersonalAgent
 from personal_ai.application.experience.background_processor import (
     BackgroundExperienceProcessor,
 )
@@ -15,6 +16,8 @@ from personal_ai.config.settings import get_settings
 from personal_ai.core.exceptions import AppException
 from personal_ai.core.logger import get_logger
 from personal_ai.db.repositories.base import ConversationRepository
+from personal_ai.domain.agent import AgentRequest
+from personal_ai.domain.experience import PersonalContext, PersonalContextItem
 from personal_ai.llm.client import LLMClient
 from personal_ai.llm.exceptions import (
     LLMAuthenticationException,
@@ -34,16 +37,17 @@ logger = get_logger(__name__)
 
 
 class ChatService:
-    """Business logic service managing chat completion, personal context retrieval augmentation, and history.
+    """Business logic service managing conversation lifecycle, experience classification, and agent orchestration.
 
     Depends exclusively on abstract interfaces.
-    Orchestrates personal context retrieval safely without failing chat upon retrieval issues.
+    Coordinates between ConversationRepository, PersonalContextRetrievalService, and PersonalAgent.
     """
 
     def __init__(
         self,
-        llm_client: LLMClient,
         conversation_repo: ConversationRepository,
+        llm_client: Optional[LLMClient] = None,
+        personal_agent: Optional[PersonalAgent] = None,
         bg_processor: Optional[BackgroundExperienceProcessor] = None,
         retrieval_service: Optional[MemoryRetrievalService] = None,
         personal_context_service: Optional[PersonalContextRetrievalService] = None,
@@ -52,27 +56,39 @@ class ChatService:
         """Initialize ChatService with dependencies.
 
         Args:
-            llm_client: Abstract LLM client interface.
             conversation_repo: Abstract conversation repository interface.
-            bg_processor: Abstract background Experience processor interface.
+            llm_client: Optional abstract LLM client interface (used to construct PersonalAgent if not provided).
+            personal_agent: Optional PersonalAgent orchestration layer instance.
+            bg_processor: Optional abstract background Experience processor interface.
             retrieval_service: Optional legacy MemoryRetrievalService.
             personal_context_service: Optional PersonalContextRetrievalService for dimension-aware context.
             context_builder: Optional context builder for formatting context into prompts.
         """
-        self._llm_client = llm_client
         self._conversation_repo = conversation_repo
         self._bg_processor = bg_processor
         self._retrieval_service = retrieval_service
         self._personal_context_service = personal_context_service
-        self._context_builder = context_builder or PersonalContextBuilder()
 
-    async def _retrieve_memory_context(
+        builder = context_builder if isinstance(context_builder, PersonalContextBuilder) else PersonalContextBuilder()
+        self._context_builder = builder
+
+        if personal_agent is not None:
+            self._personal_agent = personal_agent
+        elif llm_client is not None:
+            self._personal_agent = PersonalAgent(
+                llm_client=llm_client,
+                context_builder=builder,
+            )
+        else:
+            raise ValueError("Either personal_agent or llm_client must be provided to ChatService.")
+
+    async def _retrieve_personal_context(
         self,
         user_id: Optional[uuid.UUID],
         query: str,
         conversation_context: Optional[List[LLMMessage]] = None,
-    ) -> Optional[str]:
-        """Perform fail-safe user-scoped personal context retrieval and format into structured prompt context."""
+    ) -> Optional[PersonalContext]:
+        """Perform fail-safe user-scoped personal context retrieval."""
         settings = get_settings()
         if not user_id or not settings.memory_retrieval_enabled:
             return None
@@ -90,9 +106,7 @@ class ChatService:
                     user_id,
                     len(personal_context.items),
                 )
-                if not personal_context.is_empty:
-                    return self._context_builder.build_context(personal_context)
-                return None
+                return personal_context
             elif self._retrieval_service:
                 logger.info("Starting memory retrieval for chat [user_id=%s]", user_id)
                 memories = await self._retrieval_service.search(
@@ -106,7 +120,24 @@ class ChatService:
                     len(memories),
                 )
                 if memories:
-                    return self._context_builder.build_context(memories)
+                    items = [
+                        PersonalContextItem(
+                            experience_id=m.experience_id,
+                            content=m.content,
+                            type=m.type,
+                            domain=m.domain,
+                            score=m.similarity,
+                            similarity=m.similarity,
+                            created_at=m.created_at,
+                        )
+                        for m in memories
+                    ]
+                    return PersonalContext(
+                        user_id=user_id,
+                        query=query,
+                        items=items,
+                        total_candidates=len(items),
+                    )
                 return None
             return None
         except Exception as exc:
@@ -117,48 +148,12 @@ class ChatService:
             )
             return None
 
-    def _build_llm_messages(
-        self,
-        stored_messages: List[Any],
-        current_message: str,
-        system_prompt: Optional[str] = None,
-        memory_context: Optional[str] = None,
-    ) -> List[LLMMessage]:
-        """Build the full LLM message history: System Instructions + Memory Context + History + Current Message."""
-        messages: List[LLMMessage] = []
-
-        # 1. System instructions + Memory context
-        system_parts: List[str] = []
-        if system_prompt and system_prompt.strip():
-            system_parts.append(system_prompt.strip())
-        if memory_context and memory_context.strip():
-            system_parts.append(memory_context.strip())
-
-        if system_parts:
-            messages.append(
-                LLMMessage(role="system", content="\n\n".join(system_parts))
-            )
-
-        # 2. Conversation history (short-term)
-        for msg in stored_messages:
-            messages.append(
-                LLMMessage(
-                    role=msg.role.value if hasattr(msg.role, "value") else str(msg.role),
-                    content=msg.content,
-                )
-            )
-
-        # 3. Current user message
-        messages.append(LLMMessage(role="user", content=current_message))
-
-        return messages
-
     async def process_chat(
         self,
         request: ChatRequest,
         user_id: Optional[uuid.UUID] = None,
     ) -> ChatResponse:
-        """Process an incoming chat request, augmenting context with retrieved personal memories synchronously."""
+        """Process an incoming chat request through PersonalAgent orchestration."""
         # 1. Resolve or create conversation thread with user ownership validation
         if request.conversation_id:
             conversation = await self._conversation_repo.get_conversation(
@@ -196,18 +191,19 @@ class ChatService:
         ]
 
         # 3. Retrieve relevant personal context memories (fail-safe enhancement)
-        memory_context = await self._retrieve_memory_context(
+        personal_context = await self._retrieve_personal_context(
             user_id=user_id,
             query=request.message,
             conversation_context=conv_llm_messages,
         )
 
-        # 4. Construct complete LLM messages structure
-        history = self._build_llm_messages(
-            stored_messages=stored_messages,
+        # 4. Construct AgentRequest container
+        agent_request = AgentRequest(
             current_message=request.message,
+            user_id=user_id,
+            conversation_history=conv_llm_messages,
+            personal_context=personal_context,
             system_prompt=request.system_prompt,
-            memory_context=memory_context,
         )
 
         # 5. Persist user message to conversation history
@@ -223,25 +219,25 @@ class ChatService:
                 self._bg_processor.process_background_promotion(user_message, user_id=user_id)
             )
 
-        # 7. Execute LLM completion request
-        llm_response = await self._llm_client.generate_response(messages=history)
+        # 7. Execute PersonalAgent orchestration
+        agent_decision = await self._personal_agent.generate_response(agent_request)
 
         # 8. Persist assistant response
         await self._conversation_repo.add_message(
             conversation_id=conv_id,
             role="assistant",
-            content=llm_response.content,
+            content=agent_decision.content,
         )
 
         return ChatResponse(
             conversation_id=conv_id,
-            response=llm_response.content,
-            provider=llm_response.provider,
-            model=llm_response.model,
-            latency_ms=llm_response.latency_ms,
-            prompt_tokens=llm_response.prompt_tokens,
-            completion_tokens=llm_response.completion_tokens,
-            total_tokens=llm_response.total_tokens,
+            response=agent_decision.content,
+            provider=agent_decision.provider or "unknown",
+            model=agent_decision.model or "unknown",
+            latency_ms=agent_decision.latency_ms,
+            prompt_tokens=agent_decision.prompt_tokens,
+            completion_tokens=agent_decision.completion_tokens,
+            total_tokens=agent_decision.total_tokens,
         )
 
     async def process_chat_stream(
@@ -249,7 +245,7 @@ class ChatService:
         request: ChatRequest,
         user_id: Optional[uuid.UUID] = None,
     ) -> AsyncGenerator[str, None]:
-        """Process an incoming chat request using Server-Sent Events (SSE) streaming with memory augmentation."""
+        """Process an incoming chat request using Server-Sent Events (SSE) streaming through PersonalAgent."""
         # 1. Resolve or create conversation thread with strict user_id ownership check
         if request.conversation_id:
             conversation = await self._conversation_repo.get_conversation(
@@ -288,18 +284,19 @@ class ChatService:
         ]
 
         # 3. Retrieve relevant personal context memories (fail-safe enhancement)
-        memory_context = await self._retrieve_memory_context(
+        personal_context = await self._retrieve_personal_context(
             user_id=user_id,
             query=request.message,
             conversation_context=conv_llm_messages,
         )
 
-        # 4. Construct complete LLM messages structure
-        history = self._build_llm_messages(
-            stored_messages=stored_messages,
+        # 4. Construct AgentRequest container
+        agent_request = AgentRequest(
             current_message=request.message,
+            user_id=user_id,
+            conversation_history=conv_llm_messages,
+            personal_context=personal_context,
             system_prompt=request.system_prompt,
-            memory_context=memory_context,
         )
 
         # 5. Persist user message to conversation history
@@ -317,9 +314,9 @@ class ChatService:
 
         accumulated_chunks: List[str] = []
 
-        # 7. Stream tokens directly from LLM
+        # 7. Stream tokens directly from PersonalAgent
         try:
-            stream_gen = self._llm_client.stream_response(messages=history)
+            _, stream_gen = self._personal_agent.stream_response(agent_request)
             async for chunk in stream_gen:
                 if chunk.content:
                     accumulated_chunks.append(chunk.content)

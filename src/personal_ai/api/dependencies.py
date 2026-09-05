@@ -5,6 +5,7 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from personal_ai.agents import PersonalAgent
 from personal_ai.application.auth.auth_service import AuthService
 from personal_ai.application.memory import (
     MemoryRetrievalService,
@@ -76,16 +77,23 @@ def get_personal_context_retrieval_service(
     )
 
 
+def get_personal_agent(
+    llm_client: LLMClient = Depends(get_llm_client),
+) -> PersonalAgent:
+    """Dependency provider constructing PersonalAgent instance."""
+    return PersonalAgent(llm_client=llm_client)
+
+
 async def get_chat_service(
     session: AsyncSession = Depends(get_db_session),
-    llm_client: LLMClient = Depends(get_llm_client),
+    personal_agent: PersonalAgent = Depends(get_personal_agent),
     personal_context_service: PersonalContextRetrievalService = Depends(get_personal_context_retrieval_service),
 ) -> ChatService:
-    """Dependency providing ChatService with database session, LLM client, and personal context retrieval service."""
+    """Dependency providing ChatService with database session, PersonalAgent, and personal context retrieval service."""
     conversation_repo = SQLAlchemyConversationRepository(session=session)
     return ChatService(
-        llm_client=llm_client,
         conversation_repo=conversation_repo,
+        personal_agent=personal_agent,
         personal_context_service=personal_context_service,
     )
 
