@@ -290,3 +290,36 @@ class PersonalPatternModel(Base):
 
     user: Mapped[Optional[User]] = relationship("User")
 
+
+class PersonModel(Base):
+    """ORM Model representing an individual in the user's life (PR #29)."""
+
+    __tablename__ = "people"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    relationship_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="OTHER", index=True
+    )
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    user: Mapped[Optional[User]] = relationship("User")
+
+    __table_args__ = (
+        Index("ix_people_user_id_name", "user_id", "name"),
+    )
+

@@ -13,6 +13,7 @@ from personal_ai.application.memory import (
     PersonalContextRetrievalService,
 )
 from personal_ai.application.pattern import PersonalPatternService
+from personal_ai.application.person import PersonService
 from personal_ai.core.auth import decode_access_token
 from personal_ai.core.exceptions import AppException
 from personal_ai.db.repositories.base import UserRepository
@@ -25,11 +26,15 @@ from personal_ai.db.repositories.sqlalchemy_experience_repository import (
 from personal_ai.db.repositories.sqlalchemy_personal_pattern_repository import (
     SQLAlchemyPersonalPatternRepository,
 )
+from personal_ai.db.repositories.sqlalchemy_person_repository import (
+    SQLAlchemyPersonRepository,
+)
 from personal_ai.db.repositories.sqlalchemy_user_repository import (
     SQLAlchemyUserRepository,
 )
 from personal_ai.db.session import get_db_session
 from personal_ai.domain.pattern.repository import PersonalPatternRepository
+from personal_ai.domain.person.repository import PersonRepository
 from personal_ai.infrastructure.embedding import (
     EmbeddingProvider,
     get_embedding_provider as create_embedding_provider,
@@ -136,6 +141,24 @@ def get_personal_pattern_service(
 ) -> PersonalPatternService:
     """Dependency provider constructing PersonalPatternService with pattern repository for PR #23."""
     return PersonalPatternService(pattern_repo=pattern_repo)
+
+
+def get_person_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> PersonRepository:
+    """Dependency provider constructing PersonRepository with database session for PR #29."""
+    return SQLAlchemyPersonRepository(session=session)
+
+
+def get_person_service(
+    person_repo: PersonRepository = Depends(get_person_repository),
+    memory_quality_service: MemoryQualityService = Depends(get_memory_quality_service),
+) -> PersonService:
+    """Dependency provider constructing PersonService instance with repository and quality service for PR #29."""
+    return PersonService(
+        person_repo=person_repo,
+        memory_quality_service=memory_quality_service,
+    )
 
 
 async def get_chat_service(
