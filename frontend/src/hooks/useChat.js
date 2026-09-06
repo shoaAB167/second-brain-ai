@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { streamChatResponse } from "../services/chatApi";
 import { useAuth } from "../context/AuthContext";
+import { MessageRole, StreamEventType } from "../types/chat";
 
 const LOCAL_STORAGE_KEY = "second_brain_conversation_id";
 
@@ -9,6 +10,7 @@ export function useChat() {
   const [conversationId, setConversationId] = useState(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState(null);
+  const [lastUserPrompt, setLastUserPrompt] = useState("");
 
   const { token, openAuthModal } = useAuth();
 
@@ -38,6 +40,14 @@ export function useChat() {
     }
   }, [token]);
 
+  const stopStreaming = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsStreaming(false);
+  }, []);
+
   const startNewChat = useCallback(() => {
     requestIdRef.current++;
 
@@ -50,6 +60,7 @@ export function useChat() {
     setConversationId(null);
     setIsStreaming(false);
     setError(null);
+    setLastUserPrompt("");
     try {
       localStorage.removeItem(LOCAL_STORAGE_KEY);
     } catch {
@@ -78,20 +89,29 @@ export function useChat() {
 
       setError(null);
       setIsStreaming(true);
+      setLastUserPrompt(trimmed);
+
+      const timestamp = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
 
       const userMsgId = crypto.randomUUID();
       const assistantMsgId = crypto.randomUUID();
 
       const userMessage = {
         id: userMsgId,
-        role: "user",
+        role: MessageRole.USER,
         content: trimmed,
+        timestamp,
       };
 
       const assistantMessage = {
         id: assistantMsgId,
-        role: "assistant",
+        role: MessageRole.ASSISTANT,
         content: "",
+        timestamp,
+        personalContext: null,
       };
 
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
@@ -108,7 +128,15 @@ export function useChat() {
           (event) => {
             if (currentRequestId !== requestIdRef.current) return;
 
-            if (event.type === "token" && event.content) {
+            if (event.type === StreamEventType.CONTEXT && event.context) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMsgId
+                    ? { ...msg, personalContext: event.context }
+                    : msg
+                )
+              );
+            } else if (event.type === StreamEventType.TOKEN && event.content) {
               setMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === assistantMsgId
@@ -116,7 +144,7 @@ export function useChat() {
                     : msg
                 )
               );
-            } else if (event.type === "done") {
+            } else if (event.type === StreamEventType.DONE) {
               setIsStreaming(false);
               if (event.conversation_id) {
                 setConversationId(event.conversation_id);
@@ -126,7 +154,7 @@ export function useChat() {
                   // Ignore storage errors safely
                 }
               }
-            } else if (event.type === "error") {
+            } else if (event.type === StreamEventType.ERROR) {
               setIsStreaming(false);
               setError(
                 event.message || "An error occurred while streaming response."
@@ -147,7 +175,7 @@ export function useChat() {
       } catch (err) {
         if (currentRequestId !== requestIdRef.current) return;
         if (err.name !== "AbortError") {
-          setError("An unexpected network error occurred.");
+          setError("An unexpected network error occurred. Please try again.");
         }
       } finally {
         if (currentRequestId === requestIdRef.current) {
@@ -158,12 +186,28 @@ export function useChat() {
     [conversationId, isStreaming, token, openAuthModal]
   );
 
+  const retryLastMessage = useCallback(() => {
+    if (lastUserPrompt && !isStreaming) {
+      // Remove last failed assistant message and resend
+      setMessages((prev) => {
+        if (prev.length > 0 && prev[prev.length - 1].role === MessageRole.ASSISTANT && !prev[prev.length - 1].content) {
+          return prev.slice(0, prev.length - 2);
+        }
+        return prev;
+      });
+      sendMessage(lastUserPrompt);
+    }
+  }, [lastUserPrompt, isStreaming, sendMessage]);
+
   return {
     messages,
     conversationId,
     isStreaming,
     error,
+    lastUserPrompt,
     sendMessage,
+    stopStreaming,
     startNewChat,
+    retryLastMessage,
   };
 }

@@ -314,7 +314,24 @@ class ChatService:
 
         accumulated_chunks: List[str] = []
 
-        # 7. Stream tokens directly from PersonalAgent
+        # 7. Optionally emit safe personal context summary before streaming tokens
+        if personal_context and personal_context.items:
+            topics: List[str] = []
+            for item in personal_context.items:
+                domain_val = item.domain.value if hasattr(item.domain, "value") else (str(item.domain) if item.domain else None)
+                if domain_val and domain_val not in topics:
+                    topics.append(domain_val)
+
+            yield ChatStreamEvent(
+                type=StreamEventType.CONTEXT,
+                context={
+                    "memory_count": len(personal_context.items),
+                    "topics": topics[:4],
+                },
+                conversation_id=conv_id,
+            ).to_sse()
+
+        # 8. Stream tokens directly from PersonalAgent
         try:
             _, stream_gen = self._personal_agent.stream_response(agent_request)
             async for chunk in stream_gen:

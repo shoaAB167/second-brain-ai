@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional
+from typing import Any, Dict, Optional
 import uuid
 
 from pydantic import BaseModel, Field
@@ -40,6 +40,7 @@ class ChatResponse(BaseModel):
 class StreamEventType(str, Enum):
     """Event types for Server-Sent Events (SSE) streaming."""
 
+    CONTEXT = "context"
     TOKEN = "token"
     DONE = "done"
     ERROR = "error"
@@ -48,9 +49,12 @@ class StreamEventType(str, Enum):
 class ChatStreamEvent(BaseModel):
     """Schema for individual SSE streaming events sent to client."""
 
-    type: StreamEventType = Field(..., description="Event type: token, done, or error.")
+    type: StreamEventType = Field(..., description="Event type: context, token, done, or error.")
     content: Optional[str] = Field(default=None, description="Text chunk for token event.")
     message: Optional[str] = Field(default=None, description="Error message for error event.")
+    context: Optional[Dict[str, Any]] = Field(
+        default=None, description="Safe metadata about retrieved personal context."
+    )
     conversation_id: Optional[uuid.UUID] = Field(
         default=None, description="The conversation UUID associated with this stream."
     )
