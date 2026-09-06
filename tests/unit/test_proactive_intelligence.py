@@ -184,6 +184,41 @@ async def test_proactive_weak_keyword_overlap_does_not_falsely_count_as_progress
     assert candidates == []
 
 
+@pytest.mark.asyncio
+async def test_proactive_explicit_inactivity_in_current_message_overrides_topical_overlap():
+    """Requirement: Explicit inactivity in current message ('haven't worked on for weeks') generates GOAL_INACTIVITY,
+    and is NOT suppressed by keyword overlap with the goal.
+    """
+    service = ProactiveIntelligenceService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    goal_id = uuid.uuid4()
+    goal_exp = Experience(
+        id=goal_id,
+        user_id=str(user_id),
+        content="Build my personal AI second brain project.",
+        type=ExperienceType.GOAL,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=20),
+    )
+
+    # Current message states explicit inactivity on the goal
+    candidates = await service.analyze(
+        user_id=user_id,
+        experiences=[goal_exp],
+        current_message="I haven't worked on my personal AI second brain project for weeks.",
+        reference_time=now,
+    )
+
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.signal_type == ProactiveSignalType.GOAL_INACTIVITY
+    assert cand.priority == ProactivePriority.LOW
+    assert "goal appears inactive" in cand.reason.lower()
+    assert cand.related_experience_ids == [goal_id]
+
+
 # ==============================================================================
 # 2. Plan vs Commitment Semantics Tests
 # ==============================================================================
@@ -317,6 +352,59 @@ async def test_proactive_commitment_with_insufficient_temporal_evidence_produces
     )
 
     assert candidates == []
+
+
+@pytest.mark.asyncio
+async def test_proactive_commitment_missing_past_deadline_even_with_missed_word_produces_no_signal():
+    """Requirement: 'I promised to help my colleague review their code, but I didn't' without explicit past deadline
+    produces NO SIGNAL.
+    """
+    service = ProactiveIntelligenceService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    no_deadline_commitment = Experience(
+        user_id=str(user_id),
+        content="I promised to help my colleague review their code, but I didn't.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+    )
+
+    candidates = await service.analyze(
+        user_id=user_id,
+        experiences=[no_deadline_commitment],
+        reference_time=now,
+    )
+
+    # Missing condition 2 (no past deadline / timeframe) -> NO SIGNAL
+    assert candidates == []
+
+
+@pytest.mark.asyncio
+async def test_proactive_future_commitment_with_not_started_produces_no_signal():
+    """Requirement: 'I committed to submit the report next month, but haven't started' has future deadline -> NO SIGNAL."""
+    service = ProactiveIntelligenceService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    future_commitment = Experience(
+        user_id=str(user_id),
+        content="I committed to submit the report next month, but haven't started.",
+        type=ExperienceType.GOAL,
+        source=ExperienceSource.CHAT,
+        temporal_context="next month",
+        created_at=now - timedelta(days=1),
+    )
+
+    candidates = await service.analyze(
+        user_id=user_id,
+        experiences=[future_commitment],
+        reference_time=now,
+    )
+
+    assert candidates == []
+
 
 
 # ==============================================================================

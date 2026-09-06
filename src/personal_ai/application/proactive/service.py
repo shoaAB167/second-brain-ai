@@ -202,6 +202,7 @@ class ProactiveIntelligenceService:
         Conservative rule:
         - Weak or single generic word overlap (e.g. 'AI') does NOT count as activity.
         - Meaningful activity requires significant multi-word phrase matching or explicit activity records.
+        - Messages or records containing explicit inactivity phrases do NOT count as positive activity.
         """
         # Extract meaningful multi-word key phrases (length >= 4 chars, excluding stopwords)
         stop_words = {
@@ -209,14 +210,18 @@ class ProactiveIntelligenceService:
             "have", "been", "about", "project", "work", "more", "some", "into", "their"
         }
         words = [w for w in re.findall(r"\b\w{4,}\b", goal_content.lower()) if w not in stop_words]
+        if not words:
+            return False
 
         # 1. Check current user message
         if current_message:
             msg_lower = current_message.lower()
-            # If 2 or more distinct key terms match in the current message, or a 3+ word substring
-            matched_words = [w for w in words if w in msg_lower]
-            if len(matched_words) >= 2 or (len(words) == 1 and words[0] in msg_lower and len(words[0]) >= 6):
-                return True
+            # If current message contains explicit inactivity phrases, it is NOT positive progress
+            has_inactivity = any(phrase in msg_lower for phrase in self._EXPLICIT_INACTIVITY_PHRASES)
+            if not has_inactivity:
+                matched_words = [w for w in words if w in msg_lower]
+                if len(matched_words) >= 2 or (len(words) == 1 and words[0] in msg_lower and len(words[0]) >= 6):
+                    return True
 
         # 2. Check recent experience records
         for other in records:
@@ -227,6 +232,9 @@ class ProactiveIntelligenceService:
             # Only action/progress experience types count toward activity
             if other_type in ("EVENT", "PROJECT", "HABIT", "DECISION", "STATE"):
                 other_content = other["content"].lower()
+                # Ensure the other record doesn't indicate inactivity
+                if any(phrase in other_content for phrase in self._EXPLICIT_INACTIVITY_PHRASES):
+                    continue
                 matched_words = [w for w in words if w in other_content]
                 # Require strong topical overlap (at least 2 meaningful words)
                 if len(matched_words) >= 2:
@@ -244,13 +252,15 @@ class ProactiveIntelligenceService:
     ) -> List[ProactiveSignal]:
         """Detect potential goal inactivity signals based strictly on explicit inactivity evidence.
 
-        Conservative Invariant:
-        - Goal age ALONE (e.g. age >= 14 days) is NEVER sufficient evidence of inactivity.
-        - Inactivity MUST require explicit inactivity language or explicit temporal indications of stalled progress.
-        - If recent progress or activity is observed, NO signal is generated.
-        - If evidence is insufficient, prefer NO SIGNAL.
+        Conservative Invariant & Priority Order:
+        1. Detect explicit inactivity evidence relevant to the goal FIRST.
+        2. If explicit inactivity is present -> generate GOAL_INACTIVITY signal.
+        3. Only when explicit inactivity is NOT present should meaningful recent activity be considered.
+        4. Goal age alone is NEVER sufficient evidence of inactivity.
+        5. If evidence is insufficient, prefer NO SIGNAL.
         """
         signals: List[ProactiveSignal] = []
+        msg_lower = (current_message or "").lower()
 
         for rec in records:
             if rec["type"] != "GOAL" and rec.get("domain") != "goal":
@@ -264,22 +274,35 @@ class ProactiveIntelligenceService:
             temporal_ctx = (rec.get("temporal_context") or "").lower()
             content_lower = goal_content.lower()
 
-            # 1. Check if goal is actively being pursued
-            if self._has_meaningful_goal_activity(goal_content, goal_id, records, current_message, now):
-                # Active goal: do not generate inactivity signal
-                continue
+            stop_words = {
+                "want", "goal", "need", "like", "will", "make", "this", "that", "with", "from",
+                "have", "been", "about", "project", "work", "more", "some", "into", "their"
+            }
+            goal_words = [w for w in re.findall(r"\b\w{4,}\b", goal_content.lower()) if w not in stop_words]
 
-            # 2. Inactivity requires EXPLICIT evidence of inactivity
+            # 1. Detect explicit inactivity evidence relevant to the goal FIRST
             has_explicit_inactivity = False
             confidence = 0.72
 
-            combined_text = f"{content_lower} {temporal_ctx}"
+            combined_stored_text = f"{content_lower} {temporal_ctx}"
             for phrase in self._EXPLICIT_INACTIVITY_PHRASES:
-                if phrase in combined_text:
+                if phrase in combined_stored_text:
                     has_explicit_inactivity = True
                     confidence = 0.78
                     break
 
+            # Also check if current message indicates explicit inactivity for this goal
+            if not has_explicit_inactivity and msg_lower:
+                for phrase in self._EXPLICIT_INACTIVITY_PHRASES:
+                    if phrase in msg_lower:
+                        # Check if message is relevant to this goal
+                        matched = [w for w in goal_words if w in msg_lower]
+                        if len(matched) >= 2 or (len(goal_words) == 1 and goal_words[0] in msg_lower):
+                            has_explicit_inactivity = True
+                            confidence = 0.82
+                            break
+
+            # 2. If explicit inactivity is present, generate signal directly
             if has_explicit_inactivity:
                 signals.append(
                     ProactiveSignal(
@@ -289,6 +312,14 @@ class ProactiveIntelligenceService:
                         related_experience_ids=[goal_id],
                     )
                 )
+                continue
+
+            # 3. Only when explicit inactivity is NOT present, check for meaningful recent activity
+            if self._has_meaningful_goal_activity(goal_content, goal_id, records, current_message, now):
+                # Active goal: do not generate inactivity signal
+                continue
+
+            # 4. If neither explicit inactivity nor meaningful activity: NO SIGNAL
 
         return signals
 
@@ -300,14 +331,11 @@ class ProactiveIntelligenceService:
     ) -> List[ProactiveSignal]:
         """Detect missed commitment signals conservatively based on explicit commitment and temporal evidence.
 
-        Conservative Invariant:
-        - A generic PLAN (e.g. 'I plan to study AI') is NOT a commitment.
-        - A vague future intention is NOT a commitment.
-        - Must have:
-          1. Strong commitment evidence (ExperienceType.COMMITMENT or explicit commitment phrasing).
-          2. Temporal evidence that the deadline/timeframe is in the past.
-          3. Evidence that the expected action was missed.
-        - If temporal evidence is ambiguous or future: NO SIGNAL.
+        Conservative Invariant (All 3 conditions required):
+        1. Strong commitment evidence (ExperienceType.COMMITMENT or explicit commitment phrasing).
+        2. Temporal evidence that the deadline/timeframe is in the past.
+        3. Evidence that the expected action was missed.
+        If any one of these 3 conditions is missing -> NO SIGNAL.
         """
         signals: List[ProactiveSignal] = []
         msg_lower = (current_message or "").lower()
@@ -350,8 +378,8 @@ class ProactiveIntelligenceService:
                 if any(kw in msg_lower for kw in keywords):
                     has_missed_evidence = True
 
-            # All 3 conditions must be met: commitment + past deadline + missed evidence
-            if (is_past_deadline or has_missed_evidence) and has_missed_evidence:
+            # All 3 conditions must be strictly met: commitment + past deadline + missed evidence
+            if is_past_deadline and has_missed_evidence:
                 signals.append(
                     ProactiveSignal(
                         type=ProactiveSignalType.COMMITMENT_MISSED,
