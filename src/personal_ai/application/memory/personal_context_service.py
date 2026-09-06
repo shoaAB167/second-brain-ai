@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 from personal_ai.application.memory.dimension_analyzer import QueryDimensionAnalyzer
+from personal_ai.application.memory.quality_service import MemoryQualityService
 from personal_ai.config.settings import get_settings
 from personal_ai.core.exceptions import AppException
 from personal_ai.core.logger import get_logger
@@ -32,19 +33,24 @@ class PersonalContextRetrievalService:
         experience_repo: ExperienceRepository,
         dimension_analyzer: Optional[QueryDimensionAnalyzer] = None,
         pattern_repo: Optional[PersonalPatternRepository] = None,
+        quality_service: Optional[MemoryQualityService] = None,
     ) -> None:
-        """Initialize PersonalContextRetrievalService with abstract ports.
+        """Initialize PersonalContextRetrievalService with abstract ports and quality service.
 
         Args:
             embedding_provider: EmbeddingProvider for query vector generation.
             experience_repo: ExperienceRepository interface for user-scoped vector persistence.
             dimension_analyzer: Optional QueryDimensionAnalyzer instance.
             pattern_repo: Optional PersonalPatternRepository interface for active pattern retrieval.
+            quality_service: Optional MemoryQualityService instance for deterministic quality processing.
         """
         self._provider = embedding_provider
         self._experience_repo = experience_repo
         self._dimension_analyzer = dimension_analyzer or QueryDimensionAnalyzer()
         self._pattern_repo = pattern_repo
+        self._quality_service = quality_service or MemoryQualityService(
+            dimension_analyzer=self._dimension_analyzer
+        )
 
     async def retrieve_context(
         self,
@@ -159,170 +165,37 @@ class PersonalContextRetrievalService:
 
         total_candidates = len(scored_candidates)
 
-        # Step 5: Multi-Signal Composite Scoring & Re-Ranking for Memories
-        scored_items: List[PersonalContextItem] = []
-        now = datetime.now(timezone.utc)
-
-        for exp, similarity in scored_candidates:
-            matched_dims = self._dimension_analyzer.match_experience_dimensions(exp)
-
-            # 1. Similarity score component
-            sim_val = max(0.0, min(similarity, 1.0))
-
-            # 2. Dimension alignment boost (1.0 if matching detected dimension, else 0.0)
-            if detected_dimensions and set(detected_dimensions).intersection(set(matched_dims)):
-                dim_boost = 1.0
-            else:
-                dim_boost = 0.0
-
-            # 3. Importance boost (HIGH: 1.0, MEDIUM: 0.5, LOW: 0.0)
-            imp_val = (
-                exp.importance.value if hasattr(exp.importance, "value") else str(exp.importance or "")
-            ).upper()
-            if imp_val == "HIGH":
-                imp_boost = 1.0
-            elif imp_val == "MEDIUM":
-                imp_boost = 0.5
-            else:
-                imp_boost = 0.0  # LOW
-
-            # 4. Recency boost (decay over time)
-            if exp.created_at:
-                exp_dt = exp.created_at if exp.created_at.tzinfo else exp.created_at.replace(tzinfo=timezone.utc)
-                age_days = (now - exp_dt).total_seconds() / 86400.0
-            else:
-                age_days = 0.0
-
-            if age_days <= 7.0:
-                rec_boost = 1.0
-            elif age_days <= 30.0:
-                rec_boost = 0.5
-            else:
-                rec_boost = 0.0
-
-            # Composite weighted score
-            composite_score = (
-                (w_sim * sim_val)
-                + (w_dim * dim_boost)
-                + (w_imp * imp_boost)
-                + (w_rec * rec_boost)
-            )
-
-            exp_emo_dict = (
-                exp.emotional_context.to_dict()
-                if hasattr(exp.emotional_context, "to_dict")
-                else (exp.emotional_context if isinstance(exp.emotional_context, dict) else None)
-            )
-            exp_people_list = (
-                [p.to_dict() if hasattr(p, "to_dict") else p for p in exp.people_involved]
-                if exp.people_involved
-                else None
-            )
-
-            life_status_val = (
-                exp.lifecycle_status.value
-                if hasattr(exp.lifecycle_status, "value")
-                else (str(exp.lifecycle_status) if exp.lifecycle_status else "ACTIVE")
-            )
-
-            scored_items.append(
-                PersonalContextItem(
-                    experience_id=exp.id,
-                    content=exp.content,
-                    type=exp.type.value if exp.type and hasattr(exp.type, "value") else (str(exp.type) if exp.type else None),
-                    domain=exp.domain,
-                    importance=imp_val or "MEDIUM",
-                    lifecycle=exp.lifecycle.value if hasattr(exp.lifecycle, "value") else (str(exp.lifecycle) if exp.lifecycle else "STABLE"),
-                    lifecycle_status=life_status_val or "ACTIVE",
-                    matched_dimensions=matched_dims,
-                    score=round(composite_score, 4),
-                    similarity=round(similarity, 4),
-                    emotional_context=exp_emo_dict,
-                    people_involved=exp_people_list,
-                    temporal_context=exp.temporal_context,
-                    evidence_level=exp.evidence_level.value if hasattr(exp.evidence_level, "value") else str(exp.evidence_level or "EXTRACTED"),
-                    created_at=exp.created_at,
-                )
-            )
-
-        # Step 6: Rank descending by composite score and slice to final_limit
-        scored_items.sort(key=lambda x: x.score, reverse=True)
-        final_items = scored_items[:fin_limit]
-
-        # Step 7: Retrieve and rank active Personal Patterns (fail-safe)
-        retrieved_patterns: List[PersonalPatternContextItem] = []
+        # Step 5: Retrieve candidate Personal Patterns strictly scoped to user_id (fail-safe)
+        candidate_patterns: List[Any] = []
         total_pattern_candidates = 0
 
         if self._pattern_repo is not None:
             try:
-                # Retrieve active (HYPOTHESIS or CONFIRMED) patterns strictly scoped to user_id
                 active_patterns = await self._pattern_repo.get_active_patterns(user_id=user_id)
-                total_pattern_candidates = len(active_patterns)
-
-                scored_patterns: List[PersonalPatternContextItem] = []
-                for pat in active_patterns:
-                    # Enforce active lifecycle states (exclude WEAKENED and SUPERSEDED)
-                    pat_status_val = pat.status.value if hasattr(pat.status, "value") else str(pat.status)
-                    if pat_status_val not in (PatternStatus.HYPOTHESIS.value, PatternStatus.CONFIRMED.value):
-                        continue
-
-                    pat_dims = self._dimension_analyzer.match_pattern_dimensions(pat)
-
-                    # Compute query relevance
-                    q_rel = self._dimension_analyzer.calculate_pattern_query_relevance(
-                        query=query,
-                        pattern=pat,
-                        conversation_context=conversation_context,
-                    )
-
-                    # Retrieval Gate: Query relevance is the primary gate for candidate inclusion.
-                    # Dimension alignment is a ranking signal only and cannot bypass query relevance.
-                    if q_rel < min_pat_relevance:
-                        continue
-
-                    # Check dimension alignment (ranking boost signal)
-                    dim_matched = bool(detected_dimensions and set(detected_dimensions).intersection(set(pat_dims)))
-                    dim_score = 1.0 if dim_matched else 0.0
-
-                    # Calculate evidence strength
-                    ev_count = len(pat.evidence_ids) if pat.evidence_ids else 0
-                    ev_strength = min(ev_count / 5.0, 1.0)
-
-                    # Deterministic composite pattern ranking score:
-                    # Priority: query relevance (40%) + dimension alignment (30%) + confidence (20%) + evidence count (10%)
-                    pat_score = (
-                        (0.40 * q_rel)
-                        + (0.30 * dim_score)
-                        + (0.20 * pat.confidence)
-                        + (0.10 * ev_strength)
-                    )
-
-                    scored_patterns.append(
-                        PersonalPatternContextItem(
-                            pattern_id=pat.id,
-                            description=pat.description,
-                            domain=pat.domain,
-                            confidence=pat.confidence,
-                            status=pat_status_val,
-                            evidence_count=ev_count,
-                            score=round(pat_score, 4),
-                            matched_dimensions=pat_dims,
-                            first_observed_at=pat.first_observed_at,
-                            last_observed_at=pat.last_observed_at,
-                        )
-                    )
-
-                # Deterministic sort: score descending, then confidence descending, then evidence count descending
-                scored_patterns.sort(key=lambda p: (p.score, p.confidence, p.evidence_count), reverse=True)
-                retrieved_patterns = scored_patterns[:pat_lim]
-
+                candidate_patterns = active_patterns or []
+                total_pattern_candidates = len(candidate_patterns)
             except Exception as exc:
                 logger.warning(
-                    "Personal pattern retrieval failed safely for user %s: %s",
+                    "Personal pattern candidate retrieval failed safely for user %s: %s",
                     user_id,
                     exc,
                 )
-                retrieved_patterns = []
+                candidate_patterns = []
+
+        # Step 6: Deterministic Memory & Pattern Quality Processing & Bounded Selection (PR #25)
+        final_items, retrieved_patterns = self._quality_service.process_candidates(
+            user_id=user_id,
+            query=query,
+            experience_candidates=scored_candidates,
+            pattern_candidates=candidate_patterns,
+            detected_dimensions=detected_dimensions,
+            conversation_context=conversation_context,
+            is_historical=is_historical,
+            final_limit=fin_limit,
+            pattern_limit=pat_lim,
+            min_pattern_query_relevance=min_pat_relevance,
+        )
+
 
         duration_ms = (time.perf_counter() - start_time) * 1000.0
         logger.info(

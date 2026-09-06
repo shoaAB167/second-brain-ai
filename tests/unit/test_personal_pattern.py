@@ -1654,3 +1654,261 @@ async def test_update_pattern_enforces_user_isolation():
     assert stored.user_id == user_b
     assert stored.description == "User B project pattern"
     assert stored.confidence == 0.55
+
+
+# ==============================================================================
+# Strict Fail-Closed User Isolation Tests (Experience user_id validation)
+# ==============================================================================
+
+def test_detect_patterns_same_valid_user_id_accepted():
+    """Requirement 1: Experiences with valid user_id matching authenticated user_id are accepted."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        content="I have a project deadline coming up and feel productive under pressure.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        content="Near the project deadline my work intensity appears to increase.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+    )
+
+    patterns = service.find_candidate_patterns(
+        user_id=user_id,
+        experiences=[exp1, exp2],
+        reference_time=now,
+    )
+
+    assert len(patterns) == 1
+    assert patterns[0].user_id == user_id
+    assert patterns[0].evidence_ids == [exp1.id, exp2.id]
+
+
+def test_detect_patterns_different_valid_user_id_rejected():
+    """Requirement 2: Experiences with valid user_id belonging to another user are rejected."""
+    service = PersonalPatternService()
+    user_a = uuid.uuid4()
+    user_b = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=user_a,
+        content="I have a project deadline coming up and feel productive under pressure.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=user_b,  # Belongs to User B
+        content="Near the project deadline my work intensity appears to increase.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+    )
+
+    # Detecting for User A
+    patterns = service.find_candidate_patterns(
+        user_id=user_a,
+        experiences=[exp1, exp2],
+        reference_time=now,
+    )
+
+    # exp2 is rejected, leaving only 1 valid experience for User A -> < 2 evidence rule prevents pattern creation
+    assert len(patterns) == 0
+
+
+def test_detect_patterns_missing_user_id_rejected():
+    """Requirement 3: Experiences with missing (None) user_id are rejected (fail closed)."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        content="I have a project deadline coming up and feel productive under pressure.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=None,  # Missing user_id
+        content="Near the project deadline my work intensity appears to increase.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+    )
+
+    patterns = service.find_candidate_patterns(
+        user_id=user_id,
+        experiences=[exp1, exp2],
+        reference_time=now,
+    )
+
+    # exp2 with missing user_id must fail closed -> 0 patterns created
+    assert len(patterns) == 0
+
+
+def test_detect_patterns_malformed_user_id_rejected():
+    """Requirement 4: Experiences with malformed/invalid user_id are rejected (fail closed)."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        content="I have a project deadline coming up and feel productive under pressure.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id="malformed-not-a-valid-uuid",  # Malformed user_id string
+        content="Near the project deadline my work intensity appears to increase.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+    )
+
+    patterns = service.find_candidate_patterns(
+        user_id=user_id,
+        experiences=[exp1, exp2],
+        reference_time=now,
+    )
+
+    # exp2 with malformed user_id must fail closed -> 0 patterns created
+    assert len(patterns) == 0
+
+
+def test_evaluate_evidence_same_valid_user_id_accepted():
+    """Requirement 5a: evaluate_evidence accepts evidence with valid matching user_id."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    pattern = PersonalPattern(
+        user_id=user_id,
+        description="Work intensity appears to increase near deadlines.",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+    )
+
+    valid_exp = Experience(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        content="Upcoming deadline requires working harder and cramming before submission.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now,
+    )
+
+    updated = service.evaluate_evidence(pattern, valid_exp, is_supporting=True)
+    assert len(updated.evidence_ids) == 3
+    assert valid_exp.id in updated.evidence_ids
+    assert updated.confidence > 0.55
+
+
+def test_evaluate_evidence_different_valid_user_id_rejected():
+    """Requirement 5b: evaluate_evidence rejects evidence belonging to a different user."""
+    service = PersonalPatternService()
+    user_a = uuid.uuid4()
+    user_b = uuid.uuid4()
+    now = _fixed_now()
+
+    pattern = PersonalPattern(
+        user_id=user_a,
+        description="Work intensity appears to increase near deadlines.",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+    )
+
+    other_user_exp = Experience(
+        id=uuid.uuid4(),
+        user_id=user_b,  # User B
+        content="Upcoming deadline requires working harder and cramming before submission.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now,
+    )
+
+    updated = service.evaluate_evidence(pattern, other_user_exp, is_supporting=True)
+    assert len(updated.evidence_ids) == 2
+    assert other_user_exp.id not in updated.evidence_ids
+
+
+def test_evaluate_evidence_missing_user_id_rejected():
+    """Requirement 5c: evaluate_evidence rejects evidence with missing (None) user_id."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    pattern = PersonalPattern(
+        user_id=user_id,
+        description="Work intensity appears to increase near deadlines.",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+    )
+
+    missing_user_exp = Experience(
+        id=uuid.uuid4(),
+        user_id=None,  # Missing
+        content="Upcoming deadline requires working harder and cramming before submission.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now,
+    )
+
+    updated = service.evaluate_evidence(pattern, missing_user_exp, is_supporting=True)
+    assert len(updated.evidence_ids) == 2
+    assert missing_user_exp.id not in updated.evidence_ids
+
+
+def test_evaluate_evidence_malformed_user_id_rejected():
+    """Requirement 5d: evaluate_evidence rejects evidence with malformed/invalid user_id."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    pattern = PersonalPattern(
+        user_id=user_id,
+        description="Work intensity appears to increase near deadlines.",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+    )
+
+    malformed_user_exp = Experience(
+        id=uuid.uuid4(),
+        user_id="not-a-valid-uuid-12345",  # Malformed
+        content="Upcoming deadline requires working harder and cramming before submission.",
+        type=ExperienceType.PROJECT,
+        source=ExperienceSource.CHAT,
+        created_at=now,
+    )
+
+    updated = service.evaluate_evidence(pattern, malformed_user_exp, is_supporting=True)
+    assert len(updated.evidence_ids) == 2
+    assert malformed_user_exp.id not in updated.evidence_ids
+

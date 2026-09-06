@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from personal_ai.agents import PersonalAgent
 from personal_ai.application.auth.auth_service import AuthService
 from personal_ai.application.memory import (
+    MemoryQualityService,
     MemoryRetrievalService,
     PersonalContextRetrievalService,
 )
@@ -60,6 +61,11 @@ def get_embedding_provider() -> EmbeddingProvider:
     return create_embedding_provider()
 
 
+def get_memory_quality_service() -> MemoryQualityService:
+    """Dependency provider constructing MemoryQualityService for PR #25."""
+    return MemoryQualityService()
+
+
 def get_memory_retrieval_service(
     session: AsyncSession = Depends(get_db_session),
     embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
@@ -75,14 +81,16 @@ def get_memory_retrieval_service(
 def get_personal_context_retrieval_service(
     session: AsyncSession = Depends(get_db_session),
     embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
+    quality_service: MemoryQualityService = Depends(get_memory_quality_service),
 ) -> PersonalContextRetrievalService:
-    """Dependency provider constructing PersonalContextRetrievalService for PR #18 & PR #24."""
+    """Dependency provider constructing PersonalContextRetrievalService for PR #18, PR #24 & PR #25."""
     repo = SQLAlchemyExperienceRepository(session=session)
     pattern_repo = SQLAlchemyPersonalPatternRepository(session=session)
     return PersonalContextRetrievalService(
         embedding_provider=embedding_provider,
         experience_repo=repo,
         pattern_repo=pattern_repo,
+        quality_service=quality_service,
     )
 
 
