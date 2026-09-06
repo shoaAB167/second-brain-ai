@@ -109,9 +109,11 @@ def get_personal_agent(
     return PersonalAgent(llm_client=llm_client, tool_registry=tool_registry)
 
 
-def get_proactive_intelligence_service() -> ProactiveIntelligenceService:
-    """Dependency provider constructing ProactiveIntelligenceService instance for PR #22."""
-    return ProactiveIntelligenceService()
+def get_proactive_intelligence_service(
+    memory_quality_service: MemoryQualityService = Depends(get_memory_quality_service),
+) -> ProactiveIntelligenceService:
+    """Dependency provider constructing ProactiveIntelligenceService instance with memory quality service for PR #27."""
+    return ProactiveIntelligenceService(memory_quality_service=memory_quality_service)
 
 
 def get_personal_pattern_repository(

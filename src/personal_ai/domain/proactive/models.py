@@ -63,6 +63,9 @@ class ProactiveCandidate:
     priority: ProactivePriority
     suggested_action: str
     related_experience_ids: List[uuid.UUID] = field(default_factory=list)
+    evidence_count: int = 0
+    supporting_pattern_ids: List[uuid.UUID] = field(default_factory=list)
+    evidence_summary: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Validate confidence, priority, and enum types."""
@@ -95,6 +98,13 @@ class ProactiveCandidate:
         if not isinstance(self.related_experience_ids, list):
             raise ValueError("related_experience_ids must be a list of UUIDs.")
 
+        if not isinstance(self.supporting_pattern_ids, list):
+            raise ValueError("supporting_pattern_ids must be a list of UUIDs.")
+
+        # Default evidence_count to length of related_experience_ids if not explicitly set
+        if self.evidence_count == 0 and self.related_experience_ids:
+            object.__setattr__(self, "evidence_count", len(self.related_experience_ids))
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to clean dictionary representation."""
         return {
@@ -104,4 +114,8 @@ class ProactiveCandidate:
             "priority": self.priority.value,
             "suggested_action": self.suggested_action,
             "related_experience_ids": [str(eid) for eid in self.related_experience_ids],
+            "evidence_count": self.evidence_count,
+            "supporting_pattern_ids": [str(pid) for pid in self.supporting_pattern_ids],
+            "evidence_summary": self.evidence_summary,
         }
+

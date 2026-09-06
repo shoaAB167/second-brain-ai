@@ -73,6 +73,51 @@ class MemoryQualityService:
         """
         self._dimension_analyzer = dimension_analyzer or QueryDimensionAnalyzer()
 
+    def filter_and_deduplicate_experiences(
+        self,
+        user_id: uuid.UUID,
+        experiences: List[Experience],
+        is_historical: bool = False,
+    ) -> List[Experience]:
+        """Validate, filter lifecycle, and conservatively deduplicate experiences for an authenticated user.
+
+        Reuses canonical PR26 behavior:
+        - Candidate validation & fail-closed user isolation
+        - Lifecycle filtering (excludes EXPIRED/SUPERSEDED unless is_historical=True)
+        - Conservative deduplication with temporal variant preservation (and exact ID collapsing)
+        """
+        target_user_str = _normalize_user_id(user_id)
+        if not target_user_str:
+            logger.warning("MemoryQualityService.filter_and_deduplicate_experiences called with invalid user_id: %s", user_id)
+            return []
+
+        candidates = [(exp, 1.0) for exp in experiences if isinstance(exp, Experience)]
+        valid = self._validate_experience_candidates(candidates, target_user_str)
+        lifecycle_filtered = self._filter_experience_lifecycle(valid, is_historical=is_historical)
+        deduped = self._deduplicate_experiences(lifecycle_filtered)
+        return [exp for exp, _ in deduped]
+
+    def filter_and_deduplicate_patterns(
+        self,
+        user_id: uuid.UUID,
+        patterns: List[Any],
+    ) -> List[Any]:
+        """Validate, filter lifecycle (HYPOTHESIS/CONFIRMED), and deduplicate patterns for an authenticated user.
+
+        Reuses canonical PR26 behavior:
+        - Pattern validation & fail-closed user isolation
+        - Pattern lifecycle filtering (HYPOTHESIS and CONFIRMED only)
+        - Pattern deduplication by ID and normalized description
+        """
+        target_user_str = _normalize_user_id(user_id)
+        if not target_user_str:
+            logger.warning("MemoryQualityService.filter_and_deduplicate_patterns called with invalid user_id: %s", user_id)
+            return []
+
+        valid = self._validate_pattern_candidates(patterns, target_user_str)
+        lifecycle_filtered = self._filter_pattern_lifecycle(valid)
+        return self._deduplicate_patterns(lifecycle_filtered)
+
     def process_candidates(
         self,
         user_id: uuid.UUID,

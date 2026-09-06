@@ -3,14 +3,16 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import uuid
 
+from personal_ai.application.memory.quality_service import MemoryQualityService
 from personal_ai.core.logger import get_logger
 from personal_ai.domain.experience import (
     Experience,
-    ExperienceLifecycleStatus,
-    ExperienceType,
     PersonalContext,
     PersonalContextItem,
+    PersonalPatternContextItem,
 )
+from personal_ai.domain.pattern.entity import PersonalPattern
+from personal_ai.domain.pattern.enums import PatternStatus
 from personal_ai.domain.proactive.enums import ProactivePriority, ProactiveSignalType
 from personal_ai.domain.proactive.models import ProactiveCandidate, ProactiveSignal
 
@@ -22,21 +24,63 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _normalize_user_id(user_id: Any) -> Optional[uuid.UUID]:
+    """Convert any user_id representation to UUID safely. Fails closed on missing or malformed input."""
+    if user_id is None:
+        return None
+    if isinstance(user_id, uuid.UUID):
+        return user_id
+    if isinstance(user_id, str):
+        cleaned = user_id.strip()
+        if not cleaned:
+            return None
+        try:
+            return uuid.UUID(cleaned)
+        except (ValueError, AttributeError):
+            return None
+    return None
+
+
 class ProactiveIntelligenceService:
-    """Deterministic, model-agnostic proactive intelligence service for PR #22.
+    """Deterministic, evidence-evaluated proactive intelligence service for PR #22 & PR #27.
 
     Philosophy:
-        Observation -> Signal -> Hypothesis -> Possible Intervention
+        Observation -> Signal -> Supporting Evidence -> Pattern/Context -> Proactive Candidate
 
     Invariants:
         1. ProactiveCandidate != Action: Produces passive proposal containers only.
            Does NOT execute tools, send notifications, modify memory, or make LLM calls.
-        2. Preserves Uncertainty: Explicit emotion > extracted emotion > inferred possibility.
+        2. Preserves Uncertainty: Patterns are hypotheses, not facts or personality claims.
            Never diagnoses conditions, makes causal claims, or turns temporary states into personality traits.
         3. Strict User Isolation: Every analysis is scoped exclusively to authenticated user_id.
-        4. In-Memory Deduplication: Avoids duplicate candidates for identical evidence in a single pass.
+        4. Canonical Memory Quality: Reuses MemoryQualityService for lifecycle eligibility,
+           conservative deduplication with temporal preservation, and user-scoped validation.
         5. Conservative Signal Generation: Prefers NO SIGNAL over FALSE POSITIVE when evidence is insufficient.
+        6. Subject-Specific Pattern Support: Patterns only support signals with matching specific subjects.
+           Generic words (work, project, morning, night, routine, exercise) never independently establish relevance.
+        7. Subject-Specific Precedence: Current explicit user statements override historical patterns only
+           when the message genuinely contradicts the specific behavior/routine.
     """
+
+    # Generic stop words and generic domain terms that cannot independently establish subject compatibility
+    _GENERIC_STOP_WORDS: Set[str] = {
+        "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "from",
+        "by", "for", "with", "about", "against", "between", "into", "through", "during",
+        "before", "after", "above", "below", "to", "in", "on", "off", "over", "under",
+        "again", "further", "then", "once", "here", "there", "all", "any", "both", "each",
+        "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+        "same", "so", "than", "too", "very", "can", "will", "just", "don", "should", "now",
+        "i", "me", "my", "myself", "we", "our", "ours", "you", "your", "he", "him", "his",
+        "she", "her", "they", "them", "what", "which", "who", "whom", "this", "that", "these",
+        "those", "am", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "having", "do", "does", "did", "doing", "would", "could", "want", "need", "like",
+        "work", "project", "task", "goal", "habit", "routine", "exercise", "morning", "night",
+        "time", "plan", "activity", "feel", "feeling", "recently", "today", "yesterday",
+        "tomorrow", "hold", "pause", "paused", "stalled", "stuck", "touch", "touched",
+        "progress", "weeks", "days", "months", "started", "working", "done", "make", "build",
+        "complete", "finish", "create", "user", "tends", "usually", "often", "always",
+        "suggests", "revisit", "schedule", "track", "check", "looking", "trying",
+    }
 
     # Emotional/Mental state keywords for observational repeated state detection
     _STATE_KEYWORDS = {
@@ -65,7 +109,7 @@ class ProactiveIntelligenceService:
         "zero progress",
     ]
 
-    # Explicit commitment indicator phrases (generic plans like "I plan to" or "I will" are NOT commitments)
+    # Explicit commitment indicator phrases
     _EXPLICIT_COMMITMENT_INDICATORS = [
         r"\b(committed to|promised to|agreed to|solemnly promised)\b",
         r"\b(my commitment is|commitment to)\b",
@@ -77,20 +121,13 @@ class ProactiveIntelligenceService:
         r"\b(fell behind|delayed|unable to finish|skipped|postponed|never completed)\b",
     ]
 
-    def __init__(self) -> None:
-        """Initialize ProactiveIntelligenceService with zero external side effects."""
-        pass
-
-    def _normalize_user_id(self, user_id: Any) -> Optional[uuid.UUID]:
-        """Convert any user_id representation to UUID safely."""
-        if isinstance(user_id, uuid.UUID):
-            return user_id
-        if isinstance(user_id, str):
-            try:
-                return uuid.UUID(user_id)
-            except ValueError:
-                return None
-        return None
+    def __init__(
+        self,
+        quality_service: Optional[MemoryQualityService] = None,
+        memory_quality_service: Optional[MemoryQualityService] = None,
+    ) -> None:
+        """Initialize ProactiveIntelligenceService with canonical MemoryQualityService."""
+        self._quality_service = memory_quality_service or quality_service or MemoryQualityService()
 
     def _extract_items(
         self,
@@ -99,8 +136,13 @@ class ProactiveIntelligenceService:
         personal_context: Optional[PersonalContext] = None,
         experiences: Optional[List[Experience]] = None,
     ) -> List[Dict[str, Any]]:
-        """Normalize various observation input sources into standardized, user-isolated records."""
-        records: List[Dict[str, Any]] = []
+        """Normalize, quality-filter, and deduplicate observations using MemoryQualityService.
+
+        Delegates candidate validation, lifecycle filtering, and conservative deduplication
+        with temporal preservation directly to MemoryQualityService.
+        """
+        raw_experiences: List[Experience] = []
+        raw_context_items: List[PersonalContextItem] = []
 
         # 1. From context argument
         if isinstance(context, PersonalContext):
@@ -108,16 +150,15 @@ class ProactiveIntelligenceService:
         elif isinstance(context, list):
             for item in context:
                 if isinstance(item, Experience):
-                    experiences = (experiences or []) + [item]
+                    raw_experiences.append(item)
                 elif isinstance(item, PersonalContextItem):
-                    records.append(self._normalize_context_item(item, user_id))
+                    raw_context_items.append(item)
 
         # 2. From personal_context
         if personal_context and not personal_context.is_empty:
-            # Enforce user isolation at the container level
-            if personal_context.user_id == user_id:
-                for ctx_item in personal_context.items:
-                    records.append(self._normalize_context_item(ctx_item, user_id))
+            # Enforce fail-closed user isolation at container level
+            if _normalize_user_id(personal_context.user_id) == user_id:
+                raw_context_items.extend(personal_context.items)
             else:
                 logger.warning(
                     "User isolation violation prevented: personal_context user_id mismatch [expected=%s, got=%s]",
@@ -127,67 +168,274 @@ class ProactiveIntelligenceService:
 
         # 3. From experiences list
         if experiences:
-            for exp in experiences:
-                # Enforce user isolation
-                exp_user = self._normalize_user_id(exp.user_id)
-                if exp_user is not None and exp_user != user_id:
-                    logger.warning(
-                        "User isolation violation prevented: experience user_id mismatch [expected=%s, got=%s]",
-                        user_id,
-                        exp.user_id,
-                    )
-                    continue
+            raw_experiences.extend(experiences)
 
-                emotion_val = None
-                if exp.emotional_context:
-                    emotion_val = exp.emotional_context.emotion
+        # 4. Delegate experience validation, lifecycle filtering, and deduplication to MemoryQualityService
+        quality_filtered_experiences: List[Experience] = []
+        if raw_experiences:
+            quality_filtered_experiences = self._quality_service.filter_and_deduplicate_experiences(
+                user_id=user_id,
+                experiences=raw_experiences,
+                is_historical=False,
+            )
 
-                created = exp.created_at if isinstance(exp.created_at, datetime) else None
-                if created and created.tzinfo is None:
-                    created = created.replace(tzinfo=timezone.utc)
+        # 5. Format standardized observation dicts
+        records: List[Dict[str, Any]] = []
+        seen_ids: Set[uuid.UUID] = set()
 
-                type_str = exp.type.value if hasattr(exp.type, "value") else str(exp.type or "")
-                lifecycle_status_str = (
-                    exp.lifecycle_status.value
-                    if hasattr(exp.lifecycle_status, "value")
-                    else str(exp.lifecycle_status or "ACTIVE")
-                )
+        for exp in quality_filtered_experiences:
+            if exp.id in seen_ids:
+                continue
+            seen_ids.add(exp.id)
 
-                records.append(
-                    {
-                        "id": exp.id,
-                        "content": exp.content,
-                        "type": type_str.upper(),
-                        "domain": exp.domain,
-                        "lifecycle_status": lifecycle_status_str.upper(),
-                        "temporal_context": exp.temporal_context,
-                        "emotion": emotion_val,
-                        "created_at": created,
-                    }
-                )
+            emotion_val = None
+            if exp.emotional_context:
+                emotion_val = exp.emotional_context.emotion
+
+            created = exp.created_at if isinstance(exp.created_at, datetime) else None
+            if created and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+
+            type_str = exp.type.value if hasattr(exp.type, "value") else str(exp.type or "")
+            lifecycle_str = (
+                exp.lifecycle.value
+                if hasattr(exp.lifecycle, "value")
+                else str(exp.lifecycle or "STABLE").upper()
+            )
+            life_status = (
+                exp.lifecycle_status.value
+                if hasattr(exp.lifecycle_status, "value")
+                else str(exp.lifecycle_status or "ACTIVE").upper()
+            )
+
+            records.append(
+                {
+                    "id": exp.id,
+                    "content": exp.content,
+                    "type": type_str.upper(),
+                    "domain": exp.domain,
+                    "lifecycle": lifecycle_str,
+                    "lifecycle_status": life_status,
+                    "temporal_context": exp.temporal_context,
+                    "emotion": emotion_val,
+                    "created_at": created,
+                }
+            )
+
+        for ctx_item in raw_context_items:
+            if ctx_item.experience_id in seen_ids:
+                continue
+            seen_ids.add(ctx_item.experience_id)
+
+            emotion_val = None
+            if ctx_item.emotional_context and isinstance(ctx_item.emotional_context, dict):
+                emotion_val = ctx_item.emotional_context.get("emotion")
+
+            created = ctx_item.created_at if isinstance(ctx_item.created_at, datetime) else None
+            if created and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+
+            records.append(
+                {
+                    "id": ctx_item.experience_id,
+                    "content": ctx_item.content,
+                    "type": (ctx_item.type or "").upper(),
+                    "domain": ctx_item.domain,
+                    "lifecycle_status": (ctx_item.lifecycle_status or "ACTIVE").upper(),
+                    "temporal_context": ctx_item.temporal_context,
+                    "emotion": emotion_val,
+                    "created_at": created,
+                }
+            )
 
         return records
 
-    def _normalize_context_item(self, item: PersonalContextItem, user_id: uuid.UUID) -> Dict[str, Any]:
-        """Convert a PersonalContextItem into a standardized observation dict."""
-        emotion_val = None
-        if item.emotional_context and isinstance(item.emotional_context, dict):
-            emotion_val = item.emotional_context.get("emotion")
+    def _extract_patterns(
+        self,
+        user_id: uuid.UUID,
+        context: Optional[Union[PersonalContext, List[Any]]] = None,
+        personal_context: Optional[PersonalContext] = None,
+        patterns: Optional[List[Union[PersonalPattern, PersonalPatternContextItem]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Normalize, quality-filter, and isolate active PersonalPattern hypotheses using MemoryQualityService."""
+        raw_patterns: List[Any] = []
 
-        created = item.created_at if isinstance(item.created_at, datetime) else None
-        if created and created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
+        # 1. From context if PersonalContext
+        if isinstance(context, PersonalContext):
+            personal_context = context
 
-        return {
-            "id": item.experience_id,
-            "content": item.content,
-            "type": (item.type or "").upper(),
-            "domain": item.domain,
-            "lifecycle_status": (item.lifecycle_status or "ACTIVE").upper(),
-            "temporal_context": item.temporal_context,
-            "emotion": emotion_val,
-            "created_at": created,
-        }
+        # 2. From personal_context.patterns
+        if personal_context and getattr(personal_context, "patterns", None):
+            if _normalize_user_id(personal_context.user_id) == user_id:
+                raw_patterns.extend(personal_context.patterns)
+            else:
+                logger.warning(
+                    "User isolation violation prevented: personal_context patterns user_id mismatch [expected=%s, got=%s]",
+                    user_id,
+                    personal_context.user_id,
+                )
+
+        # 3. From explicit patterns list
+        if patterns:
+            raw_patterns.extend(patterns)
+
+        # 4. Delegate pattern validation, lifecycle filtering, and deduplication to MemoryQualityService
+        filtered_pats = self._quality_service.filter_and_deduplicate_patterns(
+            user_id=user_id,
+            patterns=raw_patterns,
+        )
+
+        pattern_records: List[Dict[str, Any]] = []
+        for pat in filtered_pats:
+            if isinstance(pat, PersonalPattern):
+                status_val = pat.status.value if hasattr(pat.status, "value") else str(pat.status).upper()
+                domain_val = pat.domain.value if hasattr(pat.domain, "value") else str(pat.domain)
+                pattern_records.append(
+                    {
+                        "id": pat.id,
+                        "description": pat.description,
+                        "domain": domain_val,
+                        "confidence": pat.confidence,
+                        "status": status_val,
+                        "evidence_count": len(pat.evidence_ids) if pat.evidence_ids else 0,
+                    }
+                )
+            elif isinstance(pat, PersonalPatternContextItem):
+                pattern_records.append(
+                    {
+                        "id": pat.pattern_id,
+                        "description": pat.description,
+                        "domain": pat.domain,
+                        "confidence": pat.confidence,
+                        "status": (pat.status or "HYPOTHESIS").upper(),
+                        "evidence_count": pat.evidence_count,
+                    }
+                )
+            elif isinstance(pat, dict):
+                pattern_records.append(
+                    {
+                        "id": pat.get("id") or pat.get("pattern_id"),
+                        "description": pat.get("description", ""),
+                        "domain": pat.get("domain", "GENERAL"),
+                        "confidence": float(pat.get("confidence", 0.70)),
+                        "status": str(pat.get("status", "HYPOTHESIS")).upper(),
+                        "evidence_count": int(pat.get("evidence_count", 1)),
+                    }
+                )
+
+        return pattern_records
+
+    def _extract_subject_words(self, text: str) -> Set[str]:
+        """Extract meaningful, non-generic subject keywords (length >= 2) from text."""
+        if not text:
+            return set()
+        words = re.findall(r"\b[a-zA-Z0-9_-]{2,}\b", text.lower())
+        return {w for w in words if w not in self._GENERIC_STOP_WORDS}
+
+    def _is_pattern_contradicted_by_message(self, pattern_desc: str, current_message: Optional[str]) -> bool:
+        """Check deterministically if the current user message explicitly contradicts a historical pattern.
+
+        Rules:
+        1. Generic words (e.g. 'switched', 'changed', 'stopped') with unrelated objects (e.g. 'switched companies')
+           do NOT constitute a contradiction of a routine pattern.
+        2. Genuine contradiction requires:
+           (a) Explicit negation of the pattern's specific routine/slot (e.g. 'no longer work at night', 'stopped running').
+           (b) An explicit temporal shift to a conflicting time slot for the same subject/activity
+               (e.g. pattern has 'night', message states 'switched to ... in the morning now').
+        """
+        if not current_message or not pattern_desc:
+            return False
+
+        msg_lower = current_message.lower()
+        pat_lower = pattern_desc.lower()
+
+        # Slot definition pairs for routine contradiction
+        slot_pairs = [
+            ({"night", "evening", "late night"}, {"morning", "early morning", "afternoon", "day"}),
+            ({"morning", "early morning"}, {"night", "evening", "afternoon", "late night"}),
+            ({"weekend", "weekends"}, {"weekday", "weekdays"}),
+            ({"weekday", "weekdays"}, {"weekend", "weekends"}),
+        ]
+
+        # Check for slot shift
+        for source_slots, conflicting_slots in slot_pairs:
+            has_source = any(re.search(r"\b" + re.escape(s) + r"\b", pat_lower) for s in source_slots)
+            if not has_source:
+                continue
+
+            # Direct negation of source slot in message
+            for s in source_slots:
+                if re.search(r"\b(no longer|not|stopped|don'?t)\b.*\b" + re.escape(s) + r"\b", msg_lower):
+                    return True
+
+            # Explicit shift to a conflicting slot
+            for c in conflicting_slots:
+                if re.search(r"\b" + re.escape(c) + r"\b", msg_lower):
+                    shift_patterns = [
+                        r"\b(switched|changed|moved|shifted)\b.*\b(to|into)\b.*\b" + re.escape(c) + r"\b",
+                        r"\b(in the|at)\b\s+" + re.escape(c) + r"\s+(now|instead)\b",
+                        r"\bnow\b.*\b(in the|at)\b\s+" + re.escape(c) + r"\b",
+                    ]
+                    if any(re.search(sp, msg_lower) for sp in shift_patterns):
+                        return True
+
+        # Check for explicit discontinuation of specific action/activity mentioned in pattern
+        action_keywords = ["run", "running", "code", "coding", "study", "studying", "write", "writing", "exercise", "workout", "gym"]
+        for act in action_keywords:
+            if re.search(r"\b" + re.escape(act) + r"\b", pat_lower):
+                if re.search(r"\b(stopped|quit|no longer|gave up on)\b\s+" + re.escape(act) + r"\b", msg_lower):
+                    return True
+
+        return False
+
+    def _find_supporting_pattern(
+        self,
+        signal: ProactiveSignal,
+        patterns: List[Dict[str, Any]],
+        records_by_id: Dict[uuid.UUID, Dict[str, Any]],
+        current_message: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Find conservative, subject-compatible active pattern supporting the proactive signal.
+
+        Rules:
+        1. A pattern supports a signal ONLY when it is meaningfully related to the SAME specific subject.
+        2. Generic words (work, project, morning, night, routine, exercise) can NEVER independently make a pattern relevant.
+        3. Current user statements strictly supersede contradictory historical patterns on the same subject.
+        """
+        if not patterns:
+            return None
+
+        # Extract subject keywords from signal's related experiences
+        signal_subject_words: Set[str] = set()
+        for eid in signal.related_experience_ids:
+            rec = records_by_id.get(eid)
+            if rec:
+                signal_subject_words.update(self._extract_subject_words(rec.get("content", "")))
+
+        # Also extract state subject for REPEATED_STATE
+        if signal.type == ProactiveSignalType.REPEATED_STATE:
+            for cluster_name in self._STATE_KEYWORDS.keys():
+                if cluster_name in signal.reason.lower():
+                    signal_subject_words.add(cluster_name)
+                    signal_subject_words.update(self._STATE_KEYWORDS[cluster_name])
+
+        for pat in patterns:
+            pat_desc = pat.get("description", "")
+            pat_words = self._extract_subject_words(pat_desc)
+
+            # Check conservative subject compatibility (specific keyword overlap required)
+            common_subjects = signal_subject_words.intersection(pat_words)
+            if not common_subjects:
+                continue
+
+            # Check if current user message contradicts this pattern
+            if self._is_pattern_contradicted_by_message(pat_desc, current_message):
+                logger.debug("Suppressed historical pattern '%s' due to explicit user contradiction.", pat_desc)
+                continue
+
+            return pat
+
+        return None
 
     def _has_meaningful_goal_activity(
         self,
@@ -197,30 +445,18 @@ class ProactiveIntelligenceService:
         current_message: Optional[str],
         now: datetime,
     ) -> bool:
-        """Check whether there is strong, non-generic evidence of recent progress or activity toward a goal.
-
-        Conservative rule:
-        - Weak or single generic word overlap (e.g. 'AI') does NOT count as activity.
-        - Meaningful activity requires significant multi-word phrase matching or explicit activity records.
-        - Messages or records containing explicit inactivity phrases do NOT count as positive activity.
-        """
-        # Extract meaningful multi-word key phrases (length >= 4 chars, excluding stopwords)
-        stop_words = {
-            "want", "goal", "need", "like", "will", "make", "this", "that", "with", "from",
-            "have", "been", "about", "project", "work", "more", "some", "into", "their"
-        }
-        words = [w for w in re.findall(r"\b\w{4,}\b", goal_content.lower()) if w not in stop_words]
+        """Check whether there is strong, non-generic evidence of recent progress or activity toward a goal."""
+        words = list(self._extract_subject_words(goal_content))
         if not words:
             return False
 
         # 1. Check current user message
         if current_message:
             msg_lower = current_message.lower()
-            # If current message contains explicit inactivity phrases, it is NOT positive progress
             has_inactivity = any(phrase in msg_lower for phrase in self._EXPLICIT_INACTIVITY_PHRASES)
             if not has_inactivity:
                 matched_words = [w for w in words if w in msg_lower]
-                if len(matched_words) >= 2 or (len(words) == 1 and words[0] in msg_lower and len(words[0]) >= 6):
+                if len(matched_words) >= 2 or (len(words) == 1 and words[0] in msg_lower and len(words[0]) >= 4):
                     return True
 
         # 2. Check recent experience records
@@ -229,15 +465,12 @@ class ProactiveIntelligenceService:
                 continue
 
             other_type = other.get("type", "")
-            # Only action/progress experience types count toward activity
             if other_type in ("EVENT", "PROJECT", "HABIT", "DECISION", "STATE"):
                 other_content = other["content"].lower()
-                # Ensure the other record doesn't indicate inactivity
                 if any(phrase in other_content for phrase in self._EXPLICIT_INACTIVITY_PHRASES):
                     continue
                 matched_words = [w for w in words if w in other_content]
-                # Require strong topical overlap (at least 2 meaningful words)
-                if len(matched_words) >= 2:
+                if len(matched_words) >= 2 or (len(words) == 1 and words[0] in other_content and len(words[0]) >= 4):
                     other_created = other.get("created_at")
                     if other_created is None or (now - other_created) < timedelta(days=14):
                         return True
@@ -250,15 +483,7 @@ class ProactiveIntelligenceService:
         current_message: Optional[str],
         now: datetime,
     ) -> List[ProactiveSignal]:
-        """Detect potential goal inactivity signals based strictly on explicit inactivity evidence.
-
-        Conservative Invariant & Priority Order:
-        1. Detect explicit inactivity evidence relevant to the goal FIRST.
-        2. If explicit inactivity is present -> generate GOAL_INACTIVITY signal.
-        3. Only when explicit inactivity is NOT present should meaningful recent activity be considered.
-        4. Goal age alone is NEVER sufficient evidence of inactivity.
-        5. If evidence is insufficient, prefer NO SIGNAL.
-        """
+        """Detect potential goal inactivity signals based strictly on explicit inactivity evidence."""
         signals: List[ProactiveSignal] = []
         msg_lower = (current_message or "").lower()
 
@@ -274,11 +499,7 @@ class ProactiveIntelligenceService:
             temporal_ctx = (rec.get("temporal_context") or "").lower()
             content_lower = goal_content.lower()
 
-            stop_words = {
-                "want", "goal", "need", "like", "will", "make", "this", "that", "with", "from",
-                "have", "been", "about", "project", "work", "more", "some", "into", "their"
-            }
-            goal_words = [w for w in re.findall(r"\b\w{4,}\b", goal_content.lower()) if w not in stop_words]
+            goal_words = list(self._extract_subject_words(goal_content))
 
             # 1. Detect explicit inactivity evidence relevant to the goal FIRST
             has_explicit_inactivity = False
@@ -295,7 +516,6 @@ class ProactiveIntelligenceService:
             if not has_explicit_inactivity and msg_lower:
                 for phrase in self._EXPLICIT_INACTIVITY_PHRASES:
                     if phrase in msg_lower:
-                        # Check if message is relevant to this goal
                         matched = [w for w in goal_words if w in msg_lower]
                         if len(matched) >= 2 or (len(goal_words) == 1 and goal_words[0] in msg_lower):
                             has_explicit_inactivity = True
@@ -314,12 +534,11 @@ class ProactiveIntelligenceService:
                 )
                 continue
 
-            # 3. Only when explicit inactivity is NOT present, check for meaningful recent activity
+            # 3. If not explicit inactivity, check if active
             if self._has_meaningful_goal_activity(goal_content, goal_id, records, current_message, now):
-                # Active goal: do not generate inactivity signal
                 continue
 
-            # 4. If neither explicit inactivity nor meaningful activity: NO SIGNAL
+            # 4. If neither: NO SIGNAL (goal age alone is never sufficient)
 
         return signals
 
@@ -329,14 +548,7 @@ class ProactiveIntelligenceService:
         current_message: Optional[str],
         now: datetime,
     ) -> List[ProactiveSignal]:
-        """Detect missed commitment signals conservatively based on explicit commitment and temporal evidence.
-
-        Conservative Invariant (All 3 conditions required):
-        1. Strong commitment evidence (ExperienceType.COMMITMENT or explicit commitment phrasing).
-        2. Temporal evidence that the deadline/timeframe is in the past.
-        3. Evidence that the expected action was missed.
-        If any one of these 3 conditions is missing -> NO SIGNAL.
-        """
+        """Detect missed commitment signals conservatively based on explicit commitment and temporal evidence."""
         signals: List[ProactiveSignal] = []
         msg_lower = (current_message or "").lower()
 
@@ -350,35 +562,31 @@ class ProactiveIntelligenceService:
             has_commitment_phrasing = any(re.search(pat, content_lower) for pat in self._EXPLICIT_COMMITMENT_INDICATORS)
 
             if not (is_explicit_type or has_commitment_phrasing):
-                # Generic plan, intention, or goal without explicit commitment -> NO SIGNAL
                 continue
 
             commitment_id = rec["id"]
 
-            # 2. Require evidence that the deadline/timeframe has passed
+            # 2. Require evidence that deadline has passed
             is_past_deadline = False
             past_indicators = ["yesterday", "last week", "last night", "passed deadline", "overdue", "missed date"]
             if any(p in temporal_ctx for p in past_indicators) or any(p in content_lower for p in past_indicators):
                 is_past_deadline = True
 
-            # If the temporal context indicates a future date/time without past indicators -> NOT missed
             future_indicators = ["tomorrow", "next week", "next month", "tonight", "in the future", "upcoming"]
             if any(f in temporal_ctx for f in future_indicators):
                 is_past_deadline = False
 
-            # 3. Require evidence that the expected action did not happen
+            # 3. Require evidence that action was missed
             has_missed_evidence = False
             if any(re.search(pat, content_lower) for pat in self._MISSED_INDICATORS) or any(
                 re.search(pat, temporal_ctx) for pat in self._MISSED_INDICATORS
             ):
                 has_missed_evidence = True
             elif msg_lower and any(re.search(pat, msg_lower) for pat in self._MISSED_INDICATORS):
-                # Ensure current message refers to this commitment topic
-                keywords = [w for w in re.findall(r"\b\w{4,}\b", content_lower)]
+                keywords = list(self._extract_subject_words(content_lower))
                 if any(kw in msg_lower for kw in keywords):
                     has_missed_evidence = True
 
-            # All 3 conditions must be strictly met: commitment + past deadline + missed evidence
             if is_past_deadline and has_missed_evidence:
                 signals.append(
                     ProactiveSignal(
@@ -396,14 +604,7 @@ class ProactiveIntelligenceService:
         records: List[Dict[str, Any]],
         now: datetime,
     ) -> List[ProactiveSignal]:
-        """Detect repeated state signals across distinct experiences with strictly observational semantics.
-
-        Conservative Invariant:
-        - Single state occurrence -> NO SIGNAL.
-        - Repeated occurrences (count >= 2) within recent observations -> REPEATED_STATE signal.
-        - Reason is strictly observational: "A similar state was recorded more than once recently."
-        - Strictly NO medical diagnosis, NO causal claims, NO personality trait inference.
-        """
+        """Detect repeated state signals across distinct experiences with strictly observational semantics."""
         signals: List[ProactiveSignal] = []
         state_clusters: Dict[str, List[uuid.UUID]] = {}
 
@@ -413,7 +614,7 @@ class ProactiveIntelligenceService:
             rec_id = rec["id"]
             rec_created = rec.get("created_at")
 
-            # Check if record is within recent window (e.g. 30 days) if created_at is present
+            # Check if record is within recent 30-day window
             if rec_created and (now - rec_created) > timedelta(days=30):
                 continue
 
@@ -426,7 +627,7 @@ class ProactiveIntelligenceService:
                         detected_cluster = cluster_name
                         break
 
-            # 2. Check content for state patterns if type is STATE or EMOTION_STATE or emotion is present
+            # 2. Check content
             if not detected_cluster and (rec["type"] in ("STATE", "EMOTION_STATE", "") or emotion):
                 for cluster_name, keywords in self._STATE_KEYWORDS.items():
                     if any(re.search(r"\b" + re.escape(kw) + r"\b", content_lower) for kw in keywords):
@@ -439,7 +640,7 @@ class ProactiveIntelligenceService:
                 if rec_id not in state_clusters[detected_cluster]:
                     state_clusters[detected_cluster].append(rec_id)
 
-        # Evaluate repetition (count >= 2 distinct experiences)
+        # Evaluate repetition (count >= 2 distinct observations required)
         for cluster_name, exp_ids in state_clusters.items():
             if len(exp_ids) >= 2:
                 count = len(exp_ids)
@@ -461,45 +662,30 @@ class ProactiveIntelligenceService:
         current_message: Optional[str] = None,
         now: Optional[datetime] = None,
     ) -> List[ProactiveSignal]:
-        """Detect observation signals using the intermediate ProactiveSignal layer.
-
-        Args:
-            records: List of normalized, user-isolated observation records.
-            current_message: Optional current user message.
-            now: Current reference UTC datetime.
-
-        Returns:
-            List[ProactiveSignal]: Detected observation signals.
-        """
+        """Detect observation signals using the intermediate ProactiveSignal layer."""
         ref_time = now or _utc_now()
         if ref_time.tzinfo is None:
             ref_time = ref_time.replace(tzinfo=timezone.utc)
 
         signals: List[ProactiveSignal] = []
-
-        # 1. Goal Inactivity Signals
         signals.extend(self._detect_goal_inactivity_signals(records, current_message, ref_time))
-
-        # 2. Missed Commitment Signals
         signals.extend(self._detect_commitment_missed_signals(records, current_message, ref_time))
-
-        # 3. Repeated State Signals
         signals.extend(self._detect_repeated_state_signals(records, ref_time))
-
         return signals
 
-    def generate_candidates(self, signals: List[ProactiveSignal]) -> List[ProactiveCandidate]:
-        """Convert detected ProactiveSignal objects into proposed ProactiveCandidate interventions.
-
-        Args:
-            signals: List of detected ProactiveSignal objects.
-
-        Returns:
-            List[ProactiveCandidate]: Formatted candidate proposals.
-        """
+    def generate_candidates(
+        self,
+        signals: List[ProactiveSignal],
+        patterns: Optional[List[Dict[str, Any]]] = None,
+        records: Optional[List[Dict[str, Any]]] = None,
+        current_message: Optional[str] = None,
+    ) -> List[ProactiveCandidate]:
+        """Convert detected signals into evidence-evaluated, non-authoritative candidate proposals."""
         candidates: List[ProactiveCandidate] = []
+        patterns_list = patterns or []
+        records_by_id = {r["id"]: r for r in (records or []) if "id" in r}
 
-        action_mapping = {
+        base_actions = {
             ProactiveSignalType.GOAL_INACTIVITY: (
                 ProactivePriority.LOW,
                 "Ask whether the user wants to revisit or work on this goal.",
@@ -510,24 +696,79 @@ class ProactiveIntelligenceService:
             ),
             ProactiveSignalType.REPEATED_STATE: (
                 ProactivePriority.MEDIUM,
-                "Ask how the user is feeling and whether they want help understanding the pattern.",
+                "Ask how the user is feeling and whether they would like help understanding recent observations.",
             ),
         }
 
         for signal in signals:
-            priority, action = action_mapping.get(
+            ev_count = len(signal.related_experience_ids)
+            if ev_count == 0:
+                continue
+
+            # For REPEATED_STATE, enforce count >= 2 distinct observations
+            if signal.type == ProactiveSignalType.REPEATED_STATE and ev_count < 2:
+                continue
+
+            priority, action = base_actions.get(
                 signal.type,
                 (ProactivePriority.LOW, "Check in with the user regarding recent observations."),
             )
+
+            # Conservative, subject-compatible pattern matching
+            supporting_pattern = self._find_supporting_pattern(
+                signal=signal,
+                patterns=patterns_list,
+                records_by_id=records_by_id,
+                current_message=current_message,
+            )
+            supporting_pattern_ids: List[uuid.UUID] = []
+            confidence = signal.confidence
+
+            if supporting_pattern and supporting_pattern.get("id"):
+                pat_id = supporting_pattern["id"]
+                if isinstance(pat_id, uuid.UUID):
+                    supporting_pattern_ids.append(pat_id)
+                elif isinstance(pat_id, str):
+                    try:
+                        supporting_pattern_ids.append(uuid.UUID(pat_id))
+                    except ValueError:
+                        pass
+
+                pat_desc = supporting_pattern.get("description", "").strip()
+                pat_conf = supporting_pattern.get("confidence", 0.70)
+
+                # Bounded deterministic confidence bump
+                confidence = round(min(confidence + min(0.04 * pat_conf, 0.04), 0.86), 4)
+
+                # Non-authoritative hypothesis phrasing for suggestions
+                if signal.type == ProactiveSignalType.GOAL_INACTIVITY:
+                    if "night" in pat_desc.lower():
+                        action = "Your project appears inactive recently. Your past activity suggests you often work on it at night. Would you like to revisit it tonight?"
+                    else:
+                        action = f"Your goal appears inactive recently. Based on your past routine hypothesis ('{pat_desc}'), would you like to revisit or schedule time for this?"
+                elif signal.type == ProactiveSignalType.COMMITMENT_MISSED:
+                    action = f"Check in on this commitment, taking into account your typical workflow hypothesis ('{pat_desc}')."
+
+            # Format evidence summary
+            if supporting_pattern_ids:
+                obs_str = "1 observation" if ev_count == 1 else f"{ev_count} observations"
+                pat_str = "1 supporting pattern" if len(supporting_pattern_ids) == 1 else f"{len(supporting_pattern_ids)} supporting patterns"
+                ev_summary = f"Based on {obs_str} and {pat_str}."
+            else:
+                obs_str = "1 observation" if ev_count == 1 else f"{ev_count} recent observations"
+                ev_summary = f"Based on {obs_str}."
 
             candidates.append(
                 ProactiveCandidate(
                     signal_type=signal.type,
                     reason=signal.reason,
-                    confidence=signal.confidence,
+                    confidence=confidence,
                     priority=priority,
                     suggested_action=action,
                     related_experience_ids=signal.related_experience_ids,
+                    evidence_count=ev_count,
+                    supporting_pattern_ids=supporting_pattern_ids,
+                    evidence_summary=ev_summary,
                 )
             )
 
@@ -539,7 +780,6 @@ class ProactiveIntelligenceService:
         deduped: List[ProactiveCandidate] = []
 
         for candidate in candidates:
-            # Key based on signal type and sorted related experience IDs (or reason)
             exp_key = ",".join(sorted(str(eid) for eid in candidate.related_experience_ids))
             dedup_key = (candidate.signal_type, exp_key or candidate.reason)
 
@@ -556,36 +796,23 @@ class ProactiveIntelligenceService:
         *,
         personal_context: Optional[PersonalContext] = None,
         experiences: Optional[List[Experience]] = None,
+        patterns: Optional[List[Union[PersonalPattern, PersonalPatternContextItem]]] = None,
         current_message: Optional[str] = None,
         reference_time: Optional[datetime] = None,
     ) -> List[ProactiveCandidate]:
-        """Analyze user-isolated observations and detect meaningful proactive intervention candidates.
-
-        Pipeline:
-            Observations -> detect_signals() -> generate_candidates() -> deduplicate -> List[ProactiveCandidate]
-
-        Args:
-            user_id: Authenticated user UUID for strict isolation.
-            context: Context container (PersonalContext or list of Experiences).
-            personal_context: Optional explicit PersonalContext container.
-            experiences: Optional explicit list of Experience entities.
-            current_message: Optional current user message / query.
-            reference_time: Optional reference UTC timestamp (defaults to current UTC time).
-
-        Returns:
-            List[ProactiveCandidate]: Bounded list of proposed intervention candidates (empty if nothing meaningful).
-        """
-        if not user_id:
-            logger.warning("ProactiveIntelligenceService.analyze called without authenticated user_id.")
+        """Analyze observations and detect evidence-evaluated proactive intervention proposals."""
+        norm_user = _normalize_user_id(user_id)
+        if not norm_user:
+            logger.warning("ProactiveIntelligenceService.analyze called without valid user_id: %s", user_id)
             return []
 
         now = reference_time or _utc_now()
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
 
-        # 1. Normalize and isolate records for authenticated user
+        # 1. Normalize, quality-filter, and deduplicate records via MemoryQualityService
         records = self._extract_items(
-            user_id=user_id,
+            user_id=norm_user,
             context=context,
             personal_context=personal_context,
             experiences=experiences,
@@ -594,28 +821,42 @@ class ProactiveIntelligenceService:
         if not records:
             return []
 
-        logger.info(
-            "Analyzing proactive intelligence signals [user_id=%s, observations_count=%d]",
-            user_id,
-            len(records),
+        # 2. Extract and isolate active patterns via MemoryQualityService
+        pattern_records = self._extract_patterns(
+            user_id=norm_user,
+            context=context,
+            personal_context=personal_context,
+            patterns=patterns,
         )
 
-        # 2. Intermediate layer: detect signals
+        logger.info(
+            "Analyzing proactive intelligence signals [user_id=%s, observations_count=%d, patterns_count=%d]",
+            norm_user,
+            len(records),
+            len(pattern_records),
+        )
+
+        # 3. Detect signals
         signals = self.detect_signals(
             records=records,
             current_message=current_message,
             now=now,
         )
 
-        # 3. Intermediate layer: generate candidates from signals
-        candidates = self.generate_candidates(signals)
+        # 4. Evidence evaluation and candidate generation
+        candidates = self.generate_candidates(
+            signals=signals,
+            patterns=pattern_records,
+            records=records,
+            current_message=current_message,
+        )
 
-        # 4. In-memory per-analysis deduplication
+        # 5. In-memory per-analysis deduplication
         deduped = self._deduplicate_candidates(candidates)
 
         logger.info(
             "Proactive intelligence analysis complete [user_id=%s, signals_count=%d, candidates_count=%d]",
-            user_id,
+            norm_user,
             len(signals),
             len(deduped),
         )
