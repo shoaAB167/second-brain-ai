@@ -36,6 +36,7 @@ from personal_ai.infrastructure.embedding import (
 )
 from personal_ai.llm import LLMClient, get_llm_client
 from personal_ai.application.proactive import ProactiveIntelligenceService
+from personal_ai.application.reflection import ReflectionService
 from personal_ai.services.chat_service import ChatService
 from personal_ai.tools import ToolRegistry, create_tool_registry
 
@@ -114,6 +115,13 @@ def get_proactive_intelligence_service(
 ) -> ProactiveIntelligenceService:
     """Dependency provider constructing ProactiveIntelligenceService instance with memory quality service for PR #27."""
     return ProactiveIntelligenceService(memory_quality_service=memory_quality_service)
+
+
+def get_reflection_service(
+    memory_quality_service: MemoryQualityService = Depends(get_memory_quality_service),
+) -> ReflectionService:
+    """Dependency provider constructing ReflectionService instance with memory quality service for PR #28."""
+    return ReflectionService(quality_service=memory_quality_service)
 
 
 def get_personal_pattern_repository(
