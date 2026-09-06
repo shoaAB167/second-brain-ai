@@ -491,14 +491,36 @@ class PersonalPatternService:
         self,
         pattern_id: Union[uuid.UUID, PersonalPattern],
         user_id: Optional[uuid.UUID] = None,
-        superseded_by_id: Optional[Union[uuid.UUID, PersonalPattern]] = None,
+        superseded_by_id: Optional[Union[uuid.UUID, PersonalPattern, str]] = None,
     ) -> Optional[PersonalPattern]:
-        """Mark an older pattern as superseded by a newer pattern without deleting history."""
+        """Mark an older pattern as superseded by a newer pattern without deleting history.
+
+        Guarantees:
+        - If superseded_by_id is None / missing, raises ValueError (fails closed to prevent dangling FKs).
+        - If a PersonalPattern is supplied, its UUID is extracted.
+        - Preserves existing user isolation and history.
+        """
+        # Resolve replacement pattern ID
+        if superseded_by_id is None:
+            raise ValueError("superseded_by_id is required to supersede a pattern.")
+
+        if isinstance(superseded_by_id, PersonalPattern):
+            target_sup_id = superseded_by_id.id
+        elif isinstance(superseded_by_id, str):
+            try:
+                target_sup_id = uuid.UUID(superseded_by_id)
+            except ValueError:
+                raise ValueError(f"Invalid superseded_by_id UUID: '{superseded_by_id}'.")
+        elif isinstance(superseded_by_id, uuid.UUID):
+            target_sup_id = superseded_by_id
+        else:
+            raise ValueError(
+                f"superseded_by_id must be a UUID, str, or PersonalPattern, got {type(superseded_by_id).__name__}"
+            )
+
         if isinstance(pattern_id, PersonalPattern):
             old_pattern = pattern_id
-            target_sup_id = superseded_by_id.id if isinstance(superseded_by_id, PersonalPattern) else superseded_by_id
-            if target_sup_id:
-                old_pattern.supersede_with(new_pattern_id=target_sup_id)
+            old_pattern.supersede_with(new_pattern_id=target_sup_id)
             if self._pattern_repo:
                 await self._pattern_repo.update(old_pattern)
             return old_pattern
@@ -510,8 +532,7 @@ class PersonalPatternService:
         if not old_pat:
             return None
 
-        target_id = superseded_by_id.id if isinstance(superseded_by_id, PersonalPattern) else (superseded_by_id or uuid.uuid4())
-        old_pat.supersede_with(new_pattern_id=target_id)
+        old_pat.supersede_with(new_pattern_id=target_sup_id)
         return await self._pattern_repo.update(old_pat)
 
     async def save_pattern(self, pattern: PersonalPattern) -> PersonalPattern:

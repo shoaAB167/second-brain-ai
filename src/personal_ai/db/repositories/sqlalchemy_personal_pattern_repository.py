@@ -65,12 +65,17 @@ class SQLAlchemyPersonalPatternRepository(PersonalPatternRepository):
         return self._model_to_domain(model)
 
     async def update(self, pattern: PersonalPattern) -> PersonalPattern:
-        """Update an existing PersonalPattern entity."""
-        stmt = select(PersonalPatternModel).where(PersonalPatternModel.id == pattern.id)
+        """Update an existing PersonalPattern entity scoped to user_id."""
+        stmt = select(PersonalPatternModel).where(
+            PersonalPatternModel.id == pattern.id,
+            PersonalPatternModel.user_id == pattern.user_id,
+        )
         res = await self._session.execute(stmt)
         model = res.scalar_one_or_none()
         if not model:
-            raise ValueError(f"PersonalPattern with id {pattern.id} not found for update.")
+            raise ValueError(
+                f"PersonalPattern with id {pattern.id} for user {pattern.user_id} not found for update."
+            )
 
         model.description = pattern.description
         model.domain = pattern.domain

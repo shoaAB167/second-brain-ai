@@ -36,6 +36,11 @@ class InMemoryPersonalPatternRepository(PersonalPatternRepository):
         return await self.create(pattern)
 
     async def update(self, pattern: PersonalPattern) -> PersonalPattern:
+        existing = self.patterns.get(pattern.id)
+        if not existing or existing.user_id != pattern.user_id:
+            raise ValueError(
+                f"PersonalPattern with id {pattern.id} for user {pattern.user_id} not found for update."
+            )
         self.patterns[pattern.id] = pattern
         return pattern
 
@@ -1381,3 +1386,95 @@ async def test_positive_explicit_recurring_fitness_routine():
     assert len(patterns) == 1
     assert patterns[0].domain == PatternDomain.FITNESS.value
     assert "consistent routine" in patterns[0].description.lower()
+
+
+# ==============================================================================
+# 24. Fail-Closed Superseding & Repository Update User-Isolation Tests
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_supersede_without_valid_replacement_id_fails_closed():
+    """Requirement: Superseding without a valid replacement ID raises ValueError and does not write dangling UUID."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    pattern = PersonalPattern(
+        user_id=user_id,
+        description="Initial project consistency pattern.",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=5),
+        last_observed_at=now,
+    )
+
+    # Domain entity level: missing new_pattern_id raises ValueError
+    with pytest.raises(ValueError, match="new_pattern_id is required"):
+        pattern.supersede_with(None)  # type: ignore
+
+    # Service level: superseded_by_id=None raises ValueError
+    with pytest.raises(ValueError, match="superseded_by_id is required"):
+        await service.supersede_pattern(
+            pattern_id=pattern,
+            superseded_by_id=None,
+        )
+
+    # Service level with invalid type raises ValueError
+    with pytest.raises(ValueError, match="superseded_by_id must be a UUID"):
+        await service.supersede_pattern(
+            pattern_id=pattern,
+            superseded_by_id=12345,  # type: ignore
+        )
+
+    # Pattern remains unmodified (not SUPERSEDED, no dangling FK)
+    assert pattern.status == PatternStatus.HYPOTHESIS
+    assert pattern.superseded_by_id is None
+
+
+@pytest.mark.asyncio
+async def test_update_pattern_enforces_user_isolation():
+    """Requirement: A pattern belonging to User B cannot be updated using a User A pattern entity."""
+    repo = InMemoryPersonalPatternRepository()
+    user_a = uuid.uuid4()
+    user_b = uuid.uuid4()
+    now = _fixed_now()
+    pattern_id = uuid.uuid4()
+
+    # Pattern created by User B
+    user_b_pattern = PersonalPattern(
+        id=pattern_id,
+        user_id=user_b,
+        description="User B project pattern",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=5),
+        last_observed_at=now,
+    )
+    await repo.create(user_b_pattern)
+
+    # Attempt to update the same pattern ID under User A
+    user_a_tampered = PersonalPattern(
+        id=pattern_id,
+        user_id=user_a,
+        description="Tampered pattern description",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.85,
+        status=PatternStatus.CONFIRMED,
+        first_observed_at=now - timedelta(days=5),
+        last_observed_at=now,
+    )
+
+    with pytest.raises(ValueError, match="not found for update"):
+        await repo.update(user_a_tampered)
+
+    # Verify User B's pattern in the repository was not modified
+    stored = await repo.get_by_id(pattern_id=pattern_id, user_id=user_b)
+    assert stored is not None
+    assert stored.user_id == user_b
+    assert stored.description == "User B project pattern"
+    assert stored.confidence == 0.55

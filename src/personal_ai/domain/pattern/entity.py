@@ -125,8 +125,18 @@ class PersonalPattern:
             self.status = PatternStatus.WEAKENED
         self.updated_at = utc_now()
 
-    def supersede_with(self, new_pattern_id: uuid.UUID) -> None:
+    def supersede_with(self, new_pattern_id: Union[uuid.UUID, str]) -> None:
         """Mark pattern as superseded by a newer, refined pattern without deleting historical record."""
+        if not new_pattern_id:
+            raise ValueError("new_pattern_id is required when superseding a pattern.")
+        if isinstance(new_pattern_id, str):
+            try:
+                new_pattern_id = uuid.UUID(new_pattern_id)
+            except ValueError:
+                raise ValueError(f"Invalid new_pattern_id UUID: '{new_pattern_id}'.")
+        elif not isinstance(new_pattern_id, uuid.UUID):
+            raise ValueError(f"new_pattern_id must be a UUID, got {type(new_pattern_id).__name__}")
+
         self.status = PatternStatus.SUPERSEDED
         self.superseded_by_id = new_pattern_id
         self.updated_at = utc_now()
