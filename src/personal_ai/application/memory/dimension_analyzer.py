@@ -2,6 +2,7 @@ import re
 from typing import List, Optional, Set
 
 from personal_ai.domain.experience import Experience, ExperienceType, RetrievalDimension
+from personal_ai.domain.pattern.entity import PersonalPattern
 from personal_ai.llm.models import LLMMessage
 
 
@@ -121,8 +122,8 @@ class QueryDimensionAnalyzer:
 
         text_to_analyze = query.lower().strip()
 
-        # Augment with last user/assistant message if available
-        if conversation_context:
+        # Augment with last user/assistant message if available ONLY when current query is a continuation
+        if self._is_continuation_query(text_to_analyze) and conversation_context:
             for msg in reversed(conversation_context[-2:]):
                 if msg.content:
                     text_to_analyze += " " + msg.content.lower().strip()
@@ -199,3 +200,180 @@ class QueryDimensionAnalyzer:
             matched.add(RetrievalDimension.PAST_EXPERIENCES)
 
         return sorted(list(matched), key=lambda d: d.value)
+
+    _PATTERN_DOMAIN_DIMENSIONS = {
+        "CAREER": [
+            RetrievalDimension.GOALS,
+            RetrievalDimension.PROJECTS,
+            RetrievalDimension.DECISIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "FITNESS": [
+            RetrievalDimension.HABITS,
+            RetrievalDimension.CURRENT_STATE,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "RELATIONSHIPS": [
+            RetrievalDimension.RELATIONSHIPS,
+            RetrievalDimension.EMOTIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "HEALTH": [
+            RetrievalDimension.CURRENT_STATE,
+            RetrievalDimension.HABITS,
+            RetrievalDimension.EMOTIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "PROJECTS": [
+            RetrievalDimension.PROJECTS,
+            RetrievalDimension.GOALS,
+            RetrievalDimension.DECISIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "LEARNING": [
+            RetrievalDimension.GOALS,
+            RetrievalDimension.PROJECTS,
+            RetrievalDimension.HABITS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "FINANCE": [
+            RetrievalDimension.GOALS,
+            RetrievalDimension.CONSTRAINTS,
+            RetrievalDimension.DECISIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "SOCIAL": [
+            RetrievalDimension.RELATIONSHIPS,
+            RetrievalDimension.EMOTIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "GENERAL": [
+            RetrievalDimension.PERSONALITY,
+            RetrievalDimension.PAST_EXPERIENCES,
+            RetrievalDimension.CURRENT_STATE,
+        ],
+    }
+
+    def match_pattern_dimensions(self, pattern: PersonalPattern) -> List[RetrievalDimension]:
+        """Map a PersonalPattern entity's domain to matching RetrievalDimensions."""
+        dom_str = (
+            pattern.domain.value if hasattr(pattern.domain, "value") else str(getattr(pattern, "domain", "GENERAL") or "GENERAL")
+        ).upper().strip()
+
+        matched = self._PATTERN_DOMAIN_DIMENSIONS.get(dom_str, [RetrievalDimension.PAST_EXPERIENCES])
+        return sorted(list(set(matched)), key=lambda d: d.value)
+
+    _CONTINUATION_PATTERNS = [
+        r"\b(get\s+(myself\s+)?back\s+on\s+track|fix\s+(that|this|it)|do\s+(that|it|this))\b",
+        r"\b(why\s+does\s+that\s+happen|why\s+is\s+that|why\s+do\s+i\s+(do\s+this|struggle))\b",
+        r"\b(tell\s+me\s+more|what\s+about\s+(that|this|it)|can\s+we\s+do\s+that|what\s+next|and\s+then)\b",
+        r"\b(why\s+am\s+i\s+like\s+this|why\s+does\s+this\s+keep\s+happening)\b",
+        r"\b(how\s+(can|do|to)\s+(i\s+)?(solve|improve|fix|handle|prepare|deal\s+with)\s*(this|that|it|better)?)\b",
+    ]
+
+    _GENERIC_STOP_WORDS = {
+        "the", "and", "that", "have", "for", "not", "with", "you", "this", "but", "his",
+        "from", "they", "say", "her", "she", "will", "one", "all", "would", "there", "their",
+        "what", "out", "about", "who", "get", "which", "go", "when", "make", "can", "like",
+        "time", "no", "just", "him", "know", "take", "people", "into", "year", "your", "good",
+        "some", "could", "them", "see", "other", "than", "then", "now", "look", "only", "come",
+        "its", "over", "think", "also", "back", "after", "use", "two", "how", "our", "work",
+        "works", "working", "first", "well", "way", "even", "new", "want", "because", "any",
+        "these", "give", "day", "most", "us", "is", "am", "are", "was", "were", "be", "been",
+        "being", "do", "does", "did", "doing", "a", "an", "i", "me", "my", "myself", "we",
+        "our", "ours", "it", "its", "tell", "say", "help", "solve", "question", "answer",
+        "please", "should", "could",
+        # Generic domain stop words that should not trigger false positives by themselves
+        "project", "projects", "system", "systems", "app", "apps", "code", "coding", "task",
+        "tasks", "goal", "goals", "habit", "habits", "routine", "routines", "state", "states",
+        "pattern", "patterns", "thing", "things", "stress", "stressed", "stressing", "general",
+        "activity", "activities", "reports", "appears", "tends", "tend", "report", "reported",
+    }
+
+    def _is_continuation_query(self, query: str) -> bool:
+        """Check if the current query is an anaphoric continuation referring to preceding context."""
+        clean = query.lower().strip()
+        words = clean.split()
+        if len(words) <= 8 and any(re.search(pat, clean) for pat in self._CONTINUATION_PATTERNS):
+            return True
+        if len(words) <= 4 and any(w in ("that", "this", "it", "track") for w in words):
+            return True
+        return False
+
+    def calculate_pattern_query_relevance(
+        self,
+        query: str,
+        pattern: PersonalPattern,
+        conversation_context: Optional[List[LLMMessage]] = None,
+    ) -> float:
+        """Calculate conservative deterministic lexical and thematic relevance between user query and pattern.
+
+        Invariants:
+        1. Current user query receives the strongest weight / primary intent.
+        2. Conversation history supplements query ONLY when current message is an anaphoric continuation.
+        3. Generic domain words (work, goal, stress, routine, habit, project, system, pattern) do not trigger false positives.
+        4. If there is no meaningful relationship between query and pattern, returns 0.0.
+        """
+        if not query or not query.strip():
+            return 0.0
+
+        current_query_text = query.lower().strip()
+
+        # Step 1: Resolve context text: current message is primary; history only used on continuation
+        if self._is_continuation_query(current_query_text) and conversation_context:
+            context_snippets: List[str] = [current_query_text]
+            for msg in reversed(conversation_context[-2:]):
+                if msg.content:
+                    context_snippets.append(msg.content.lower().strip())
+            analyzed_text = " ".join(context_snippets)
+        else:
+            analyzed_text = current_query_text
+
+        # Step 2: Extract meaningful content words (excluding generic stop words)
+        raw_query_words = set(re.findall(r"\b[a-z]{3,}\b", analyzed_text))
+        meaningful_query_words = {w for w in raw_query_words if w not in self._GENERIC_STOP_WORDS and len(w) >= 4}
+
+        if not meaningful_query_words:
+            return 0.0
+
+        # Step 3: Extract meaningful content words from pattern description
+        pat_desc = (getattr(pattern, "description", "") or "").lower()
+        raw_pat_words = set(re.findall(r"\b[a-z]{3,}\b", pat_desc))
+        meaningful_pat_words = {w for w in raw_pat_words if w not in self._GENERIC_STOP_WORDS and len(w) >= 4}
+
+        # Step 4: Check exact phrase / multi-word overlap
+        query_words_list = re.findall(r"\b[a-z]{3,}\b", analyzed_text)
+        query_bigrams = {
+            f"{query_words_list[i]} {query_words_list[i+1]}"
+            for i in range(len(query_words_list) - 1)
+            if query_words_list[i] not in self._GENERIC_STOP_WORDS or query_words_list[i+1] not in self._GENERIC_STOP_WORDS
+        }
+        has_bigram_match = any(bg in pat_desc for bg in query_bigrams)
+
+        # Step 5: Check stem/word overlap
+        overlap_count = 0
+        for qw in meaningful_query_words:
+            for pw in meaningful_pat_words:
+                if qw == pw:
+                    overlap_count += 1
+                    break
+                elif pw.startswith(qw) or qw.startswith(pw):
+                    overlap_count += 1
+                    break
+                elif len(qw) >= 4 and len(pw) >= 4 and qw[:4] == pw[:4]:
+                    overlap_count += 1
+                    break
+
+        if overlap_count == 0 and not has_bigram_match:
+            return 0.0
+
+        score = 0.0
+        if has_bigram_match:
+            score += 0.50
+        if overlap_count >= 2:
+            score += 0.50
+        elif overlap_count == 1:
+            score += 0.35
+
+        return round(min(score, 1.0), 4)
+

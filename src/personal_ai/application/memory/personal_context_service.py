@@ -12,8 +12,11 @@ from personal_ai.domain.experience import (
     ExperienceRepository,
     PersonalContext,
     PersonalContextItem,
+    PersonalPatternContextItem,
     RetrievalDimension,
 )
+from personal_ai.domain.pattern.enums import PatternStatus
+from personal_ai.domain.pattern.repository import PersonalPatternRepository
 from personal_ai.infrastructure.embedding.provider import EmbeddingProvider
 from personal_ai.llm.models import LLMMessage
 
@@ -21,13 +24,14 @@ logger = get_logger(__name__)
 
 
 class PersonalContextRetrievalService:
-    """Application service for performing context-aware, dimension-guided personal memory retrieval."""
+    """Application service for performing context-aware, dimension-guided personal memory and pattern retrieval."""
 
     def __init__(
         self,
         embedding_provider: EmbeddingProvider,
         experience_repo: ExperienceRepository,
         dimension_analyzer: Optional[QueryDimensionAnalyzer] = None,
+        pattern_repo: Optional[PersonalPatternRepository] = None,
     ) -> None:
         """Initialize PersonalContextRetrievalService with abstract ports.
 
@@ -35,10 +39,12 @@ class PersonalContextRetrievalService:
             embedding_provider: EmbeddingProvider for query vector generation.
             experience_repo: ExperienceRepository interface for user-scoped vector persistence.
             dimension_analyzer: Optional QueryDimensionAnalyzer instance.
+            pattern_repo: Optional PersonalPatternRepository interface for active pattern retrieval.
         """
         self._provider = embedding_provider
         self._experience_repo = experience_repo
         self._dimension_analyzer = dimension_analyzer or QueryDimensionAnalyzer()
+        self._pattern_repo = pattern_repo
 
     async def retrieve_context(
         self,
@@ -47,6 +53,8 @@ class PersonalContextRetrievalService:
         conversation_context: Optional[List[LLMMessage]] = None,
         candidate_limit: Optional[int] = None,
         final_limit: Optional[int] = None,
+        pattern_limit: Optional[int] = None,
+        min_pattern_query_relevance: Optional[float] = None,
         similarity_threshold: Optional[float] = None,
         include_historical: Optional[bool] = None,
     ) -> PersonalContext:
@@ -56,6 +64,7 @@ class PersonalContextRetrievalService:
         - Query & context dimension understanding
         - User-scoped semantic vector candidate retrieval
         - Multi-signal re-ranking (vector similarity + dimension match + importance + recency + lifecycle)
+        - User-scoped active Personal Pattern hypothesis retrieval and deterministic ranking
         - Bounded top-K selection
 
         Args:
@@ -64,11 +73,13 @@ class PersonalContextRetrievalService:
             conversation_context: Optional recent conversation context messages.
             candidate_limit: Optional override for candidate vector search limit.
             final_limit: Optional override for final context items limit.
+            pattern_limit: Optional override for personal context pattern limit.
+            min_pattern_query_relevance: Optional override for minimum query relevance threshold.
             similarity_threshold: Optional minimum cosine similarity threshold.
             include_historical: Optional flag to explicitly search historical/superseded memories.
 
         Returns:
-            PersonalContext: Bounded personal context object containing ranked items.
+            PersonalContext: Bounded personal context object containing ranked items and patterns.
 
         Raises:
             AppException: On invalid user_id, empty query, or unrecoverable provider failure.
@@ -81,6 +92,12 @@ class PersonalContextRetrievalService:
         settings = get_settings()
         cand_limit = candidate_limit or settings.personal_context_candidate_limit
         fin_limit = final_limit or settings.personal_context_final_limit
+        pat_lim = pattern_limit or settings.personal_context_pattern_limit
+        min_pat_relevance = (
+            min_pattern_query_relevance
+            if min_pattern_query_relevance is not None
+            else settings.personal_context_min_pattern_query_relevance
+        )
         threshold = (
             similarity_threshold
             if similarity_threshold is not None
@@ -142,8 +159,7 @@ class PersonalContextRetrievalService:
 
         total_candidates = len(scored_candidates)
 
-        # Step 5: Multi-Signal Composite Scoring & Re-Ranking
-        # Dominant signal: semantic similarity (e.g. 70%), with small bounded boosts for dimension (15%), importance (10%), recency (5%)
+        # Step 5: Multi-Signal Composite Scoring & Re-Ranking for Memories
         scored_items: List[PersonalContextItem] = []
         now = datetime.now(timezone.utc)
 
@@ -184,7 +200,7 @@ class PersonalContextRetrievalService:
             else:
                 rec_boost = 0.0
 
-            # Simplified composite weighted score
+            # Composite weighted score
             composite_score = (
                 (w_sim * sim_val)
                 + (w_dim * dim_boost)
@@ -233,12 +249,88 @@ class PersonalContextRetrievalService:
         scored_items.sort(key=lambda x: x.score, reverse=True)
         final_items = scored_items[:fin_limit]
 
+        # Step 7: Retrieve and rank active Personal Patterns (fail-safe)
+        retrieved_patterns: List[PersonalPatternContextItem] = []
+        total_pattern_candidates = 0
+
+        if self._pattern_repo is not None:
+            try:
+                # Retrieve active (HYPOTHESIS or CONFIRMED) patterns strictly scoped to user_id
+                active_patterns = await self._pattern_repo.get_active_patterns(user_id=user_id)
+                total_pattern_candidates = len(active_patterns)
+
+                scored_patterns: List[PersonalPatternContextItem] = []
+                for pat in active_patterns:
+                    # Enforce active lifecycle states (exclude WEAKENED and SUPERSEDED)
+                    pat_status_val = pat.status.value if hasattr(pat.status, "value") else str(pat.status)
+                    if pat_status_val not in (PatternStatus.HYPOTHESIS.value, PatternStatus.CONFIRMED.value):
+                        continue
+
+                    pat_dims = self._dimension_analyzer.match_pattern_dimensions(pat)
+
+                    # Compute query relevance
+                    q_rel = self._dimension_analyzer.calculate_pattern_query_relevance(
+                        query=query,
+                        pattern=pat,
+                        conversation_context=conversation_context,
+                    )
+
+                    # Retrieval Gate: Query relevance is the primary gate for candidate inclusion.
+                    # Dimension alignment is a ranking signal only and cannot bypass query relevance.
+                    if q_rel < min_pat_relevance:
+                        continue
+
+                    # Check dimension alignment (ranking boost signal)
+                    dim_matched = bool(detected_dimensions and set(detected_dimensions).intersection(set(pat_dims)))
+                    dim_score = 1.0 if dim_matched else 0.0
+
+                    # Calculate evidence strength
+                    ev_count = len(pat.evidence_ids) if pat.evidence_ids else 0
+                    ev_strength = min(ev_count / 5.0, 1.0)
+
+                    # Deterministic composite pattern ranking score:
+                    # Priority: query relevance (40%) + dimension alignment (30%) + confidence (20%) + evidence count (10%)
+                    pat_score = (
+                        (0.40 * q_rel)
+                        + (0.30 * dim_score)
+                        + (0.20 * pat.confidence)
+                        + (0.10 * ev_strength)
+                    )
+
+                    scored_patterns.append(
+                        PersonalPatternContextItem(
+                            pattern_id=pat.id,
+                            description=pat.description,
+                            domain=pat.domain,
+                            confidence=pat.confidence,
+                            status=pat_status_val,
+                            evidence_count=ev_count,
+                            score=round(pat_score, 4),
+                            matched_dimensions=pat_dims,
+                            first_observed_at=pat.first_observed_at,
+                            last_observed_at=pat.last_observed_at,
+                        )
+                    )
+
+                # Deterministic sort: score descending, then confidence descending, then evidence count descending
+                scored_patterns.sort(key=lambda p: (p.score, p.confidence, p.evidence_count), reverse=True)
+                retrieved_patterns = scored_patterns[:pat_lim]
+
+            except Exception as exc:
+                logger.warning(
+                    "Personal pattern retrieval failed safely for user %s: %s",
+                    user_id,
+                    exc,
+                )
+                retrieved_patterns = []
+
         duration_ms = (time.perf_counter() - start_time) * 1000.0
         logger.info(
-            "Personal context retrieved [user_id=%s, candidates=%d, selected=%d, dimensions=%s, duration_ms=%.1f]",
+            "Personal context retrieved [user_id=%s, candidates=%d, selected=%d, patterns_selected=%d, dimensions=%s, duration_ms=%.1f]",
             user_id,
             total_candidates,
             len(final_items),
+            len(retrieved_patterns),
             [d.value for d in detected_dimensions],
             duration_ms,
         )
@@ -248,5 +340,7 @@ class PersonalContextRetrievalService:
             query=query,
             detected_dimensions=detected_dimensions,
             items=final_items,
+            patterns=retrieved_patterns,
             total_candidates=total_candidates,
+            total_pattern_candidates=total_pattern_candidates,
         )

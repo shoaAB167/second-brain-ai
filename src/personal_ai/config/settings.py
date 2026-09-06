@@ -73,9 +73,11 @@ class Settings(BaseSettings):
     memory_retrieval_enabled: bool = True
     memory_retrieval_limit: int = 5
 
-    # Personal Context Retrieval Settings (PR #18)
+    # Personal Context Retrieval Settings (PR #18 & PR #24)
     personal_context_candidate_limit: int = 15
     personal_context_final_limit: int = 5
+    personal_context_pattern_limit: int = 3
+    personal_context_min_pattern_query_relevance: float = 0.30
     personal_context_similarity_threshold: float = 0.3
     personal_context_weight_similarity: float = 0.70
     personal_context_weight_dimension: float = 0.15
@@ -129,7 +131,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_personal_context_limits(self) -> "Settings":
-        """Validate that personal context candidate and final limits are properly bounded."""
+        """Validate that personal context candidate, final, and pattern limits are properly bounded."""
         if not (1 <= self.personal_context_candidate_limit <= 50):
             raise ValueError(
                 f"personal_context_candidate_limit ({self.personal_context_candidate_limit}) must be between 1 and 50."
@@ -137,6 +139,14 @@ class Settings(BaseSettings):
         if not (1 <= self.personal_context_final_limit <= 20):
             raise ValueError(
                 f"personal_context_final_limit ({self.personal_context_final_limit}) must be between 1 and 20."
+            )
+        if not (1 <= self.personal_context_pattern_limit <= 10):
+            raise ValueError(
+                f"personal_context_pattern_limit ({self.personal_context_pattern_limit}) must be between 1 and 10."
+            )
+        if not (0.0 <= self.personal_context_min_pattern_query_relevance <= 1.0):
+            raise ValueError(
+                f"personal_context_min_pattern_query_relevance ({self.personal_context_min_pattern_query_relevance}) must be between 0.0 and 1.0."
             )
         if self.personal_context_final_limit > self.personal_context_candidate_limit:
             raise ValueError(
