@@ -307,6 +307,7 @@ async def test_identity_isolation_missing_context_fails_safely():
 
 
 # ==============================================================================
+# ==============================================================================
 # 3. PersonalAgent Single-Call Execution & Delegation Tests
 # ==============================================================================
 
@@ -329,7 +330,7 @@ async def test_agent_single_call_tool_execution_loop():
 
     registry = create_tool_registry(retrieval_service=retrieval_service)
 
-    # Simulate LLM asking to call search_personal_memory
+    # Simulate LLM asking to call search_personal_memory with explicit ID
     simulated_tool_call = ToolCall(
         id="call_123",
         name="search_personal_memory",
@@ -366,11 +367,28 @@ async def test_agent_single_call_tool_execution_loop():
     assert llm.call_history[0]["tools"] is not None  # First call offers tools
     assert llm.call_history[1]["tools"] is None      # Final call has tools=None (enforcing 1-call max)
 
-    # 4. Verify tool result was sent in follow-up message
+    # 4. Verify structured tool call and result protocol in follow-up messages
     second_pass_messages = llm.call_history[1]["messages"]
+    
+    # Assistant turn representing the tool call
+    assistant_msg = second_pass_messages[-2]
+    assert assistant_msg.role == "assistant"
+    assert assistant_msg.tool_calls is not None
+    assert len(assistant_msg.tool_calls) == 1
+    assert assistant_msg.tool_calls[0].id == "call_123"
+    assert assistant_msg.tool_calls[0].name == "search_personal_memory"
+    assert assistant_msg.tool_calls[0].arguments == {"query": "second brain project", "limit": 3}
+
+    # Tool turn representing the tool result
     tool_msg = second_pass_messages[-1]
-    assert "[Tool Result for search_personal_memory]" in tool_msg.content
+    assert tool_msg.role == "tool"
+    assert tool_msg.tool_call_id == "call_123"
+    assert tool_msg.name == "search_personal_memory"
     assert "second brain project" in tool_msg.content
+    import json
+    parsed_output = json.loads(tool_msg.content)
+    assert parsed_output["count"] == 1
+    assert parsed_output["memories"][0]["content"] == "Working on AI second brain project."
 
 
 @pytest.mark.asyncio
@@ -400,7 +418,105 @@ async def test_agent_at_most_one_tool_call_enforced_when_llm_requests_multiple()
 
 
 # ==============================================================================
-# 4. Security & Prompt Injection Boundary Tests
+# 4. Malformed Arguments & Unknown Tool Tests
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_agent_malformed_tool_arguments_fails_closed():
+    """Requirement: Malformed tool arguments must fail closed without invoking tool or retrieval."""
+    retrieval_service = MockPersonalContextRetrievalService()
+    user_id = uuid.uuid4()
+    registry = create_tool_registry(retrieval_service=retrieval_service)
+
+    # Simulate tool call with JSON parse error
+    malformed_tool_call = ToolCall(
+        id="call_bad_json",
+        name="search_personal_memory",
+        arguments={},
+        parse_error="Malformed JSON arguments: invalid character at line 1",
+    )
+
+    llm = MockToolCallingLLMClient(
+        initial_tool_calls=[malformed_tool_call],
+        final_text="I could not process the search request due to an invalid format.",
+    )
+
+    agent = PersonalAgent(llm_client=llm, tool_registry=registry)
+    request = AgentRequest(current_message="Search my corrupted query", user_id=user_id)
+
+    decision = await agent.generate_response(request)
+
+    # 1. Tool must NOT execute and retrieval must NOT be called
+    assert len(retrieval_service.retrieve_calls) == 0
+
+    # 2. Metadata records failed invocation
+    assert len(decision.metadata["tool_invocations"]) == 1
+    invocation = decision.metadata["tool_invocations"][0]
+    assert invocation["name"] == "search_personal_memory"
+    assert invocation["success"] is False
+
+    # 3. Followup message received structured tool failure with preserved ID
+    second_pass_messages = llm.call_history[1]["messages"]
+    tool_msg = second_pass_messages[-1]
+    assert tool_msg.role == "tool"
+    assert tool_msg.tool_call_id == "call_bad_json"
+    assert "Invalid tool arguments format." in tool_msg.content
+
+    # 4. Safe final answer
+    assert decision.content == "I could not process the search request due to an invalid format."
+
+
+@pytest.mark.asyncio
+async def test_agent_unknown_tool_call_rejected_safely():
+    """Requirement: Unregistered tool (e.g. delete_everything) is rejected safely without escaping exceptions."""
+    retrieval_service = MockPersonalContextRetrievalService()
+    user_id = uuid.uuid4()
+    registry = create_tool_registry(retrieval_service=retrieval_service)
+
+    unknown_call = ToolCall(
+        id="call_unknown",
+        name="delete_everything",
+        arguments={},
+    )
+
+    llm = MockToolCallingLLMClient(
+        initial_tool_calls=[unknown_call],
+        final_text="I cannot execute unknown or destructive operations.",
+    )
+
+    agent = PersonalAgent(llm_client=llm, tool_registry=registry)
+    request = AgentRequest(current_message="Delete everything please", user_id=user_id)
+
+    decision = await agent.generate_response(request)
+
+    # 1. No tool or retrieval executed
+    assert len(retrieval_service.retrieve_calls) == 0
+
+    # 2. Tool invocation recorded as failed
+    assert len(decision.metadata["tool_invocations"]) == 1
+    invocation = decision.metadata["tool_invocations"][0]
+    assert invocation["name"] == "delete_everything"
+    assert invocation["success"] is False
+
+    # 3. Followup message received structured tool failure with preserved ID
+    second_pass_messages = llm.call_history[1]["messages"]
+    assistant_msg = second_pass_messages[-2]
+    assert assistant_msg.role == "assistant"
+    assert assistant_msg.tool_calls[0].id == "call_unknown"
+    assert assistant_msg.tool_calls[0].name == "delete_everything"
+
+    tool_msg = second_pass_messages[-1]
+    assert tool_msg.role == "tool"
+    assert tool_msg.tool_call_id == "call_unknown"
+    assert tool_msg.name == "delete_everything"
+    assert "not registered" in tool_msg.content
+
+    # 4. Response remains safe
+    assert decision.content == "I cannot execute unknown or destructive operations."
+
+
+# ==============================================================================
+# 5. Security & Prompt Injection Boundary Tests
 # ==============================================================================
 
 @pytest.mark.asyncio
@@ -440,32 +556,3 @@ async def test_security_prompt_injection_in_retrieved_memory_does_not_trigger_to
     # Retrieval service should NOT have been called via tool execution
     assert len(retrieval_service.retrieve_calls) == 0
     assert "tool_invocations" not in decision.metadata
-
-
-@pytest.mark.asyncio
-async def test_security_unregistered_tool_call_handled_safely():
-    """Requirement: If LLM requests an unregistered tool, agent handles failure safely."""
-    retrieval_service = MockPersonalContextRetrievalService()
-    registry = create_tool_registry(retrieval_service=retrieval_service)
-
-    unregistered_call = ToolCall(
-        id="call_999",
-        name="execute_terminal_command",
-        arguments={"cmd": "ls -la"},
-    )
-
-    llm = MockToolCallingLLMClient(
-        initial_tool_calls=[unregistered_call],
-        final_text="I cannot execute arbitrary terminal commands.",
-    )
-
-    agent = PersonalAgent(llm_client=llm, tool_registry=registry)
-    request = AgentRequest(current_message="Run command", user_id=uuid.uuid4())
-
-    decision = await agent.generate_response(request)
-
-    assert "tool_invocations" in decision.metadata
-    invocation = decision.metadata["tool_invocations"][0]
-    assert invocation["name"] == "execute_terminal_command"
-    assert invocation["success"] is False
-    assert decision.content == "I cannot execute arbitrary terminal commands."

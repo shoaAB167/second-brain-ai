@@ -1,6 +1,7 @@
 import json
 import re
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+import uuid
 
 from personal_ai.application.memory.personal_context_builder import PersonalContextBuilder
 from personal_ai.core.logger import get_logger
@@ -296,35 +297,53 @@ class PersonalAgent:
         # Handle at most ONE structured tool call (PR #21 single-call policy)
         if llm_response.tool_calls:
             tool_call = llm_response.tool_calls[0]
+            tool_call_id = tool_call.id or f"call_{uuid.uuid4().hex[:8]}"
+
             logger.info(
-                "PersonalAgent executing structured tool call [tool=%s, user_id=%s]",
+                "PersonalAgent executing structured tool call [tool=%s, id=%s, user_id=%s]",
                 tool_call.name,
+                tool_call_id,
                 request.user_id,
             )
 
-            context = (
-                ToolExecutionContext(user_id=request.user_id)
-                if request.user_id
-                else None
-            )
+            # Fail closed if tool arguments failed parsing (malformed JSON)
+            if tool_call.parse_error:
+                logger.warning(
+                    "Tool call arguments parsing failed closed [tool=%s, error=%s]",
+                    tool_call.name,
+                    tool_call.parse_error,
+                )
+                tool_result = ToolResult(
+                    success=False,
+                    error="Invalid tool arguments format.",
+                    metadata={"tool_name": tool_call.name},
+                )
+            else:
+                context = (
+                    ToolExecutionContext(user_id=request.user_id)
+                    if request.user_id
+                    else None
+                )
 
-            tool_result = await self.execute_tool(
-                name=tool_call.name,
-                arguments=tool_call.arguments,
-                context=context,
-            )
+                tool_result = await self.execute_tool(
+                    name=tool_call.name,
+                    arguments=tool_call.arguments,
+                    context=context,
+                )
 
-            # Build follow-up messages incorporating the tool result for final response
+            # Build follow-up messages complying with structured tool protocol:
+            # 1. Assistant message representing the initiated tool call
             followup_messages = list(messages)
-            assistant_content = (
-                llm_response.content
-                if llm_response.content
-                else f"Calling tool '{tool_call.name}'."
-            )
+            assistant_content = llm_response.content if llm_response.content else ""
             followup_messages.append(
-                LLMMessage(role="assistant", content=assistant_content)
+                LLMMessage(
+                    role="assistant",
+                    content=assistant_content,
+                    tool_calls=[tool_call],
+                )
             )
 
+            # 2. Tool message representing the ToolResult, preserving tool_call_id
             tool_payload = (
                 tool_result.output
                 if tool_result.success
@@ -332,8 +351,10 @@ class PersonalAgent:
             )
             followup_messages.append(
                 LLMMessage(
-                    role="user",
-                    content=f"[Tool Result for {tool_call.name}]:\n{json.dumps(tool_payload)}",
+                    role="tool",
+                    content=json.dumps(tool_payload),
+                    tool_call_id=tool_call_id,
+                    name=tool_call.name,
                 )
             )
 

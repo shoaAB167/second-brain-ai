@@ -78,7 +78,7 @@ class SearchPersonalMemoryTool(BaseTool):
         if not clean_query:
             raise ValueError("Search query cannot be empty.")
 
-        effective_limit = max(1, min(limit or 5, 10))
+        effective_limit = limit if limit is not None else 5
 
         logger.info(
             "Executing SearchPersonalMemoryTool [user_id=%s, query_len=%d, limit=%d]",

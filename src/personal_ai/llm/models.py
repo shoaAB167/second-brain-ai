@@ -15,13 +15,6 @@ class LLMProvider(str, Enum):
     OLLAMA = "ollama"
 
 
-class LLMMessage(BaseModel):
-    """Domain message representation for LLM interactions."""
-
-    role: str = Field(..., description="Role of the message sender (e.g. user, assistant, system, tool).")
-    content: str = Field(..., description="Text content of the message.")
-
-
 class ToolCall(BaseModel):
     """Domain model representing a structured tool call requested by an LLM."""
 
@@ -29,6 +22,25 @@ class ToolCall(BaseModel):
     name: str = Field(..., description="Name of the tool capability to invoke.")
     arguments: Dict[str, Any] = Field(
         default_factory=dict, description="Parsed arguments dictionary for the tool."
+    )
+    parse_error: Optional[str] = Field(
+        default=None, description="Error message if tool arguments failed JSON parsing (fail closed)."
+    )
+
+
+class LLMMessage(BaseModel):
+    """Domain message representation for LLM interactions."""
+
+    role: str = Field(..., description="Role of the message sender (e.g. user, assistant, system, tool).")
+    content: str = Field(..., description="Text content of the message.")
+    tool_call_id: Optional[str] = Field(
+        default=None, description="Identifier of the tool call this message responds to (for role='tool')."
+    )
+    tool_calls: Optional[List[ToolCall]] = Field(
+        default=None, description="Optional tool calls initiated by an assistant message."
+    )
+    name: Optional[str] = Field(
+        default=None, description="Optional tool or function name for tool responses."
     )
 
 
