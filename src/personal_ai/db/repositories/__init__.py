@@ -11,6 +11,9 @@ from personal_ai.db.repositories.sqlalchemy_experience_relationship_repository i
 from personal_ai.db.repositories.sqlalchemy_experience_repository import (
     SQLAlchemyExperienceRepository,
 )
+from personal_ai.db.repositories.sqlalchemy_personal_pattern_repository import (
+    SQLAlchemyPersonalPatternRepository,
+)
 
 __all__ = [
     "ConversationRepository",
@@ -18,4 +21,6 @@ __all__ = [
     "SQLAlchemyExperienceRepository",
     "SQLAlchemyExperienceClassificationRepository",
     "SQLAlchemyExperienceRelationshipRepository",
+    "SQLAlchemyPersonalPatternRepository",
 ]
+
