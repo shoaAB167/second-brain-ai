@@ -11,6 +11,7 @@ from personal_ai.application.memory import (
     MemoryRetrievalService,
     PersonalContextRetrievalService,
 )
+from personal_ai.application.pattern import PersonalPatternService
 from personal_ai.core.auth import decode_access_token
 from personal_ai.core.exceptions import AppException
 from personal_ai.db.repositories.base import UserRepository
@@ -20,10 +21,14 @@ from personal_ai.db.repositories.sqlalchemy_conversation_repository import (
 from personal_ai.db.repositories.sqlalchemy_experience_repository import (
     SQLAlchemyExperienceRepository,
 )
+from personal_ai.db.repositories.sqlalchemy_personal_pattern_repository import (
+    SQLAlchemyPersonalPatternRepository,
+)
 from personal_ai.db.repositories.sqlalchemy_user_repository import (
     SQLAlchemyUserRepository,
 )
 from personal_ai.db.session import get_db_session
+from personal_ai.domain.pattern.repository import PersonalPatternRepository
 from personal_ai.infrastructure.embedding import (
     EmbeddingProvider,
     get_embedding_provider as create_embedding_provider,
@@ -97,6 +102,20 @@ def get_personal_agent(
 def get_proactive_intelligence_service() -> ProactiveIntelligenceService:
     """Dependency provider constructing ProactiveIntelligenceService instance for PR #22."""
     return ProactiveIntelligenceService()
+
+
+def get_personal_pattern_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> PersonalPatternRepository:
+    """Dependency provider constructing PersonalPatternRepository with database session for PR #23."""
+    return SQLAlchemyPersonalPatternRepository(session=session)
+
+
+def get_personal_pattern_service(
+    pattern_repo: Optional[PersonalPatternRepository] = Depends(get_personal_pattern_repository),
+) -> PersonalPatternService:
+    """Dependency provider constructing PersonalPatternService with pattern repository for PR #23."""
+    return PersonalPatternService(pattern_repo=pattern_repo)
 
 
 async def get_chat_service(
