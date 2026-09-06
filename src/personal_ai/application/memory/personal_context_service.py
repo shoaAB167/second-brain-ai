@@ -54,6 +54,7 @@ class PersonalContextRetrievalService:
         candidate_limit: Optional[int] = None,
         final_limit: Optional[int] = None,
         pattern_limit: Optional[int] = None,
+        min_pattern_query_relevance: Optional[float] = None,
         similarity_threshold: Optional[float] = None,
         include_historical: Optional[bool] = None,
     ) -> PersonalContext:
@@ -73,6 +74,7 @@ class PersonalContextRetrievalService:
             candidate_limit: Optional override for candidate vector search limit.
             final_limit: Optional override for final context items limit.
             pattern_limit: Optional override for personal context pattern limit.
+            min_pattern_query_relevance: Optional override for minimum query relevance threshold.
             similarity_threshold: Optional minimum cosine similarity threshold.
             include_historical: Optional flag to explicitly search historical/superseded memories.
 
@@ -91,6 +93,11 @@ class PersonalContextRetrievalService:
         cand_limit = candidate_limit or settings.personal_context_candidate_limit
         fin_limit = final_limit or settings.personal_context_final_limit
         pat_lim = pattern_limit or settings.personal_context_pattern_limit
+        min_pat_relevance = (
+            min_pattern_query_relevance
+            if min_pattern_query_relevance is not None
+            else settings.personal_context_min_pattern_query_relevance
+        )
         threshold = (
             similarity_threshold
             if similarity_threshold is not None
@@ -268,13 +275,14 @@ class PersonalContextRetrievalService:
                         conversation_context=conversation_context,
                     )
 
-                    # Check dimension alignment
+                    # Retrieval Gate: Query relevance is the primary gate for candidate inclusion.
+                    # Dimension alignment is a ranking signal only and cannot bypass query relevance.
+                    if q_rel < min_pat_relevance:
+                        continue
+
+                    # Check dimension alignment (ranking boost signal)
                     dim_matched = bool(detected_dimensions and set(detected_dimensions).intersection(set(pat_dims)))
                     dim_score = 1.0 if dim_matched else 0.0
-
-                    # Exclude pattern if completely irrelevant to both query and detected dimensions
-                    if q_rel <= 0.0 and not dim_matched:
-                        continue
 
                     # Calculate evidence strength
                     ev_count = len(pat.evidence_ids) if pat.evidence_ids else 0

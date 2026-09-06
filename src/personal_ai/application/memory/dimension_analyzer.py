@@ -357,7 +357,10 @@ class QueryDimensionAnalyzer:
                 if qw == pw:
                     overlap_count += 1
                     break
-                elif len(qw) >= 4 and len(pw) >= 4 and (qw[:4] == pw[:4] or qw[:4] in pw or pw[:4] in qw):
+                elif pw.startswith(qw) or qw.startswith(pw):
+                    overlap_count += 1
+                    break
+                elif len(qw) >= 4 and len(pw) >= 4 and qw[:4] == pw[:4]:
                     overlap_count += 1
                     break
 

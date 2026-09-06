@@ -192,6 +192,165 @@ async def test_relevant_pattern_ranks_above_unrelated_pattern(session_maker):
 
 
 # ==============================================================================
+# REVIEW FIX TESTS (Gating & Relevance)
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_dimension_match_with_zero_relevance_is_not_retrieved(session_maker):
+    """Review Test 1: Dimension match (PROJECTS) but zero query relevance must NOT retrieve pattern."""
+    user_id = uuid.uuid4()
+    provider = MockEmbeddingProvider()
+
+    async with session_maker() as session:
+        exp_repo = SQLAlchemyExperienceRepository(session=session)
+        pat_repo = SQLAlchemyPersonalPatternRepository(session=session)
+
+        pat = PersonalPattern(
+            user_id=user_id,
+            description="Work intensity appears to increase near deadlines.",
+            domain=PatternDomain.PROJECTS.value,
+            confidence=0.80,
+            status=PatternStatus.CONFIRMED,
+            evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        )
+        await pat_repo.create(pat)
+
+        service = PersonalContextRetrievalService(
+            embedding_provider=provider,
+            experience_repo=exp_repo,
+            pattern_repo=pat_repo,
+        )
+
+        # Query activates PROJECTS dimension, but has zero lexical/semantic relevance to the specific pattern
+        context = await service.retrieve_context(
+            user_id=user_id,
+            query="How should I structure my project?",
+        )
+
+        # Must NOT be retrieved merely because both belong to PROJECTS
+        assert len(context.patterns) == 0
+
+
+@pytest.mark.asyncio
+async def test_relevant_query_still_retrieves_pattern(session_maker):
+    """Review Test 2: Relevant query with meaningful relevance retrieves the pattern."""
+    user_id = uuid.uuid4()
+    provider = MockEmbeddingProvider()
+
+    async with session_maker() as session:
+        exp_repo = SQLAlchemyExperienceRepository(session=session)
+        pat_repo = SQLAlchemyPersonalPatternRepository(session=session)
+
+        pat = PersonalPattern(
+            user_id=user_id,
+            description="Work intensity appears to increase near deadlines.",
+            domain=PatternDomain.PROJECTS.value,
+            confidence=0.80,
+            status=PatternStatus.CONFIRMED,
+            evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        )
+        await pat_repo.create(pat)
+
+        service = PersonalContextRetrievalService(
+            embedding_provider=provider,
+            experience_repo=exp_repo,
+            pattern_repo=pat_repo,
+        )
+
+        context = await service.retrieve_context(
+            user_id=user_id,
+            query="Why does my work intensity increase near deadlines?",
+        )
+
+        assert len(context.patterns) == 1
+        assert context.patterns[0].description == pat.description
+
+
+@pytest.mark.asyncio
+async def test_generic_project_query_does_not_retrieve_unrelated_project_pattern(session_maker):
+    """Review Test 3: Generic project query does not retrieve an unrelated architectural progress pattern."""
+    user_id = uuid.uuid4()
+    provider = MockEmbeddingProvider()
+
+    async with session_maker() as session:
+        exp_repo = SQLAlchemyExperienceRepository(session=session)
+        pat_repo = SQLAlchemyPersonalPatternRepository(session=session)
+
+        pat = PersonalPattern(
+            user_id=user_id,
+            description="Project activity tends to drop after initial architectural progress.",
+            domain=PatternDomain.PROJECTS.value,
+            confidence=0.80,
+            status=PatternStatus.CONFIRMED,
+            evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        )
+        await pat_repo.create(pat)
+
+        service = PersonalContextRetrievalService(
+            embedding_provider=provider,
+            experience_repo=exp_repo,
+            pattern_repo=pat_repo,
+        )
+
+        context = await service.retrieve_context(
+            user_id=user_id,
+            query="Tell me about my project.",
+        )
+
+        # Must not be retrieved on generic words alone
+        assert len(context.patterns) == 0
+
+
+@pytest.mark.asyncio
+async def test_dimension_and_relevance_ranking_works(session_maker):
+    """Review Test 4: Pattern with high relevance + moderate confidence outranks pattern with lower relevance + high confidence."""
+    user_id = uuid.uuid4()
+    provider = MockEmbeddingProvider()
+
+    async with session_maker() as session:
+        exp_repo = SQLAlchemyExperienceRepository(session=session)
+        pat_repo = SQLAlchemyPersonalPatternRepository(session=session)
+
+        # Pattern A: High relevance ("intensity", "deadlines"), moderate confidence (0.60)
+        pat_a = PersonalPattern(
+            user_id=user_id,
+            description="Work intensity appears to increase near deadlines.",
+            domain=PatternDomain.PROJECTS.value,
+            confidence=0.60,
+            status=PatternStatus.HYPOTHESIS,
+            evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        )
+        # Pattern B: Low relevance ("progress" only), high confidence (0.95)
+        pat_b = PersonalPattern(
+            user_id=user_id,
+            description="Project activity tends to drop after initial architectural progress.",
+            domain=PatternDomain.PROJECTS.value,
+            confidence=0.95,
+            status=PatternStatus.CONFIRMED,
+            evidence_ids=[uuid.uuid4() for _ in range(5)],
+        )
+        await pat_repo.create(pat_a)
+        await pat_repo.create(pat_b)
+
+        service = PersonalContextRetrievalService(
+            embedding_provider=provider,
+            experience_repo=exp_repo,
+            pattern_repo=pat_repo,
+        )
+
+        # Query matches both intensity and deadlines directly, plus mentions progress
+        context = await service.retrieve_context(
+            user_id=user_id,
+            query="How is my work intensity and progress near deadlines?",
+            pattern_limit=2,
+        )
+
+        assert len(context.patterns) >= 1
+        # Pattern A must rank above Pattern B
+        assert context.patterns[0].description == pat_a.description
+
+
+# ==============================================================================
 # REQUIREMENT 3: Broad Keyword False Positives Do NOT Retrieve Unrelated Patterns
 # ==============================================================================
 
