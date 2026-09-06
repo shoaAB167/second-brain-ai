@@ -32,17 +32,23 @@ class PersonalPatternService:
         7. History Preservation: Historical patterns are never deleted (status transitions to WEAKENED or SUPERSEDED).
     """
 
-    # Conservative thematic keyword clusters for observable behavioral patterns
+    # Conservative thematic keyword clusters for observable behavioral patterns.
+    # Each theme specifies required_components: a list of component requirements.
+    # To form valid evidence, ALL components within a theme must match in the SAME individual Experience.
     _PATTERN_THEMES = [
         {
             "id": "project_inconsistency",
             "domain": PatternDomain.PROJECTS.value,
             "description": "Project activity appears to become inconsistent after periods of initial activity.",
-            "keywords": [
-                r"\b(procrastinated|procrastinating|procrastination)\b",
-                r"\b(haven'?t worked on|delayed|delaying|stalled|put off|postponed)\b",
-                r"\b(struggling to continue|lost momentum|skipping study|skipping project|delaying my ai study)\b",
-                r"\b(hard to stay consistent|inconsistent with project|delay working on)\b",
+            "required_components": [
+                # Component 1: Project / Study context
+                [
+                    r"\b(project|study|ai project|coding|code|second brain|tasks?|assignment|course|learning)\b",
+                ],
+                # Component 2: Inconsistency / Delay / Procrastination
+                [
+                    r"\b(procrastinated|procrastinating|procrastination|haven'?t worked on|delayed|delaying|stalled|put off|postponed|struggling to continue|lost momentum|skipping|inconsistent|hard to stay consistent|delay working on)\b",
+                ],
             ],
             "relevant_types": {"GOAL", "PROJECT", "EVENT", "HABIT", "STATE", "DECISION", "FACT"},
         },
@@ -50,10 +56,15 @@ class PersonalPatternService:
             "id": "deadline_intensity_surge",
             "domain": PatternDomain.PROJECTS.value,
             "description": "Work intensity appears to increase near deadlines.",
-            "keywords": [
-                r"\b(near deadline|close to deadline|deadline approaching|before the deadline|upcoming deadline|deadline tomorrow)\b",
-                r"\b(working harder|work intensity|cramming|hyperfocused before|rush to finish|finish before the deadline)\b",
-                r"\b(productive under pressure|last minute burst)\b",
+            "required_components": [
+                # Component 1: Deadline indicator
+                [
+                    r"\b(deadline|due date|submission date|milestone deadline|upcoming deadline|near deadline|before the deadline|close to deadline)\b",
+                ],
+                # Component 2: Increased work intensity indicator
+                [
+                    r"\b(working harder|work intensity|cramming|hyperfocused|rush to finish|productive under pressure|last minute burst|finish before|working late to finish|intensity goes up)\b",
+                ],
             ],
             "relevant_types": {"GOAL", "PROJECT", "EVENT", "HABIT", "DECISION", "STATE", "FACT"},
         },
@@ -61,9 +72,15 @@ class PersonalPatternService:
             "id": "sleep_energy_correlation",
             "domain": PatternDomain.HEALTH.value,
             "description": "Repeatedly reports feeling low energy after poor sleep or late nights.",
-            "keywords": [
-                r"\b(poor sleep|bad sleep|late night|slept late|lack of sleep|insomnia)\b",
-                r"\b(tired today|low energy|exhausted morning|groggy|drained afternoon)\b",
+            "required_components": [
+                # Component 1: Sleep / Late night indicator
+                [
+                    r"\b(poor sleep|bad sleep|late night|slept late|lack of sleep|insomnia|slept poorly|didn'?t sleep well|slept badly|trouble sleeping)\b",
+                ],
+                # Component 2: Low energy / Exhaustion indicator
+                [
+                    r"\b(tired|low energy|exhausted|groggy|drained|fatigue|sluggish|exhaustion|no energy)\b",
+                ],
             ],
             "relevant_types": {"STATE", "EMOTION_STATE", "EVENT", "HABIT", "FACT"},
         },
@@ -71,9 +88,15 @@ class PersonalPatternService:
             "id": "milestone_stress_response",
             "domain": PatternDomain.CAREER.value,
             "description": "Tends to report feeling stressed or anxious around major project milestones or deadlines.",
-            "keywords": [
-                r"\b(presentation|demo|board meeting|interview|milestone|review|project deadline|upcoming deadline)\b",
-                r"\b(nervous|anxious|stressed|anxiety|under pressure|overwhelmed)\b",
+            "required_components": [
+                # Component 1: Milestone / Deadline / Presentation indicator
+                [
+                    r"\b(presentation|demo|board meeting|interview|milestone|review|project deadline|upcoming deadline|launch|exam)\b",
+                ],
+                # Component 2: Stress / Anxiety / Overwhelmed indicator
+                [
+                    r"\b(nervous|anxious|stressed|anxiety|under pressure|overwhelmed|panic|tense|stress)\b",
+                ],
             ],
             "relevant_types": {"STATE", "EMOTION_STATE", "EVENT", "FACT"},
         },
@@ -81,9 +104,15 @@ class PersonalPatternService:
             "id": "morning_focus_preference",
             "domain": PatternDomain.LEARNING.value,
             "description": "Productivity tends to be higher when focused work is scheduled in the morning.",
-            "keywords": [
-                r"\b(morning focus|productive morning|early morning routine|morning study)\b",
-                r"\b(more focused early|accomplished a lot before noon)\b",
+            "required_components": [
+                # Component 1: Morning indicator
+                [
+                    r"\b(morning|early morning|before noon|start of the day)\b",
+                ],
+                # Component 2: Focus / Productivity indicator
+                [
+                    r"\b(focused|focus|productive|productivity|accomplished a lot|deep work|flow state)\b",
+                ],
             ],
             "relevant_types": {"HABIT", "PROJECT", "EVENT", "STATE", "FACT"},
         },
@@ -91,8 +120,15 @@ class PersonalPatternService:
             "id": "fitness_consistency",
             "domain": PatternDomain.FITNESS.value,
             "description": "Fitness and exercise activities appear to follow a consistent routine.",
-            "keywords": [
-                r"\b(run|running|5k run|workout|gym|exercise|fitness|lifting|cardio)\b",
+            "required_components": [
+                # Component 1: Fitness activity indicator
+                [
+                    r"\b(run|running|5k|10k|workout|gym|exercise|fitness|lifting|cardio|training)\b",
+                ],
+                # Component 2: Explicit recurrence / routine indicator
+                [
+                    r"\b(regularly|regular|routine|consistently|consistent|every (day|week|morning|evening|weekend)|daily|weekly|\d+ times a week|habit|streak|on schedule|scheduled)\b",
+                ],
             ],
             "relevant_types": {"HABIT", "EVENT", "GOAL", "STATE", "FACT"},
         },
@@ -238,20 +274,7 @@ class PersonalPatternService:
             matched_experiences: List[Experience] = []
 
             for exp in valid_experiences:
-                exp_content = exp.content.lower()
-                exp_temporal = (exp.temporal_context or "").lower()
-                exp_emotion = (exp.emotional_context.emotion if exp.emotional_context else "") or ""
-
-                combined_text = f"{exp_content} {exp_temporal} {exp_emotion}".lower()
-
-                # Check if this experience matches theme patterns
-                is_match = False
-                for pattern_regex in theme["keywords"]:
-                    if re.search(pattern_regex, combined_text):
-                        is_match = True
-                        break
-
-                if is_match:
+                if self._matches_theme_experience(theme, exp):
                     matched_experiences.append(exp)
 
             # Minimum evidence rule: require >= 2 distinct matched experiences
@@ -287,6 +310,26 @@ class PersonalPatternService:
 
         return candidate_patterns
 
+    def _matches_theme_experience(self, theme: Dict[str, Any], experience: Experience) -> bool:
+        """Evaluate whether a single experience satisfies ALL required thematic components.
+
+        Every component in theme['required_components'] must match within the SAME experience.
+        """
+        exp_content = experience.content.lower()
+        exp_temporal = (experience.temporal_context or "").lower()
+        exp_emotion = (experience.emotional_context.emotion if experience.emotional_context else "") or ""
+        combined_text = f"{exp_content} {exp_temporal} {exp_emotion}".lower()
+
+        for component_regexes in theme.get("required_components", []):
+            component_matched = False
+            for pattern_regex in component_regexes:
+                if re.search(pattern_regex, combined_text):
+                    component_matched = True
+                    break
+            if not component_matched:
+                return False
+        return True
+
     def _matches_pattern(self, pattern: PersonalPattern, experience: Experience) -> bool:
         """Check if an experience contains evidence relevant to the pattern theme/domain."""
         theme = next(
@@ -301,15 +344,7 @@ class PersonalPatternService:
         if not theme:
             return False
 
-        exp_content = experience.content.lower()
-        exp_temporal = (experience.temporal_context or "").lower()
-        exp_emotion = (experience.emotional_context.emotion if experience.emotional_context else "") or ""
-        combined_text = f"{exp_content} {exp_temporal} {exp_emotion}".lower()
-
-        for pattern_regex in theme["keywords"]:
-            if re.search(pattern_regex, combined_text):
-                return True
-        return False
+        return self._matches_theme_experience(theme, experience)
 
     async def detect_patterns(
         self,

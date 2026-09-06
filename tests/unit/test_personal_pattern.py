@@ -805,7 +805,7 @@ async def test_deterministic_execution_no_llm_or_tools_needed():
     exp1 = Experience(
         id=uuid.uuid4(),
         user_id=str(user_id),
-        content="Went for a 5k run this morning.",
+        content="Maintaining my daily 5k running routine every morning.",
         type=ExperienceType.EVENT,
         source=ExperienceSource.CHAT,
         created_at=now - timedelta(days=3),
@@ -814,7 +814,7 @@ async def test_deterministic_execution_no_llm_or_tools_needed():
     exp2 = Experience(
         id=uuid.uuid4(),
         user_id=str(user_id),
-        content="Completed my workout and gym exercise session today.",
+        content="Completed my regular gym workout routine on schedule today.",
         type=ExperienceType.EVENT,
         source=ExperienceSource.CHAT,
         created_at=now - timedelta(days=1),
@@ -1118,3 +1118,266 @@ def test_domain_entity_from_dict_fails_closed_on_corrupted_status():
 
     with pytest.raises(ValueError):
         PersonalPattern.from_dict(corrupted_dict)
+
+
+# ==============================================================================
+# 23. Intra-Experience Component Relational Validation (Negative & Positive Tests)
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_negative_poor_sleep_alone_and_low_energy_alone_produces_no_pattern():
+    """Negative Requirement 1: Poor sleep alone + low energy separately -> NO pattern."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    # Exp 1 mentions sleep, but NOT low energy
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I had poor sleep and insomnia last night.",
+        type=ExperienceType.STATE,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    # Exp 2 mentions low energy, but NOT sleep
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I have low energy and feel tired today.",
+        type=ExperienceType.STATE,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    patterns = await service.detect_patterns(user_id, [exp1, exp2], reference_time=now)
+    # Must NOT form relational sleep_energy_correlation pattern
+    assert patterns == []
+
+
+@pytest.mark.asyncio
+async def test_negative_deadline_alone_and_stress_alone_produces_no_pattern():
+    """Negative Requirement 2: Deadline alone + stress separately -> NO pattern."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    # Exp 1 mentions deadline, but NO stress
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="The project deadline and presentation is scheduled for next Friday.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    # Exp 2 mentions stress, but NO deadline/milestone
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I am feeling anxious, nervous, and stressed today.",
+        type=ExperienceType.STATE,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    patterns = await service.detect_patterns(user_id, [exp1, exp2], reference_time=now)
+    # Must NOT form relational milestone_stress_response pattern
+    assert patterns == []
+
+
+@pytest.mark.asyncio
+async def test_negative_deadline_alone_and_working_harder_alone_produces_no_pattern():
+    """Negative Requirement 3: Deadline alone + working harder separately -> NO pattern."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    # Exp 1 mentions deadline, but NO intensity surge
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="The upcoming deadline for the assignment is next week.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    # Exp 2 mentions working harder, but NO deadline
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I was hyperfocused and working harder today on general tasks.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    patterns = await service.detect_patterns(user_id, [exp1, exp2], reference_time=now)
+    # Must NOT form relational deadline_intensity_surge pattern
+    assert patterns == []
+
+
+@pytest.mark.asyncio
+async def test_negative_two_unrelated_gym_exercise_events_produces_no_fitness_consistency():
+    """Negative Requirement 4: Two isolated gym/exercise events -> NO fitness consistency pattern without routine evidence."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I went for a 5k run today.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=3),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I went to the gym for a workout session.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    patterns = await service.detect_patterns(user_id, [exp1, exp2], reference_time=now)
+    assert patterns == []
+
+
+@pytest.mark.asyncio
+async def test_positive_same_experience_connects_poor_sleep_and_low_energy():
+    """Positive Requirement 1: Same experience connects poor sleep with low energy across 2+ experiences -> pattern."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Poor sleep last night left me feeling very low energy and tired today.",
+        type=ExperienceType.STATE,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=3),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Slept poorly and woke up completely exhausted and groggy this morning.",
+        type=ExperienceType.STATE,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    patterns = await service.detect_patterns(user_id, [exp1, exp2], reference_time=now)
+    assert len(patterns) == 1
+    assert patterns[0].domain == PatternDomain.HEALTH.value
+    assert patterns[0].status == PatternStatus.HYPOTHESIS
+    assert "low energy after poor sleep" in patterns[0].description.lower()
+
+
+@pytest.mark.asyncio
+async def test_positive_same_experience_connects_deadline_and_stress():
+    """Positive Requirement 2: Same experience connects deadline with stress across 2+ experiences -> pattern."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I am feeling very stressed as the project deadline approaches.",
+        type=ExperienceType.STATE,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=4),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Upcoming deadline presentation is making me feel overwhelmed and anxious.",
+        type=ExperienceType.STATE,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    patterns = await service.detect_patterns(user_id, [exp1, exp2], reference_time=now)
+    assert len(patterns) >= 1
+    career_pat = next((p for p in patterns if p.domain == PatternDomain.CAREER.value), None)
+    assert career_pat is not None
+    assert "feeling stressed" in career_pat.description.lower()
+
+
+@pytest.mark.asyncio
+async def test_positive_same_experience_connects_deadline_and_increased_work_intensity():
+    """Positive Requirement 3: Same experience connects deadline with work intensity across 2+ experiences -> pattern."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Whenever I have an upcoming deadline, my work intensity goes up.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=3),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Working much harder now to finish before the deadline tomorrow.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    patterns = await service.detect_patterns(user_id, [exp1, exp2], reference_time=now)
+    assert len(patterns) == 1
+    assert patterns[0].domain == PatternDomain.PROJECTS.value
+    assert "work intensity appears to increase near deadlines" in patterns[0].description.lower()
+
+
+@pytest.mark.asyncio
+async def test_positive_explicit_recurring_fitness_routine():
+    """Positive Requirement 4: Explicit recurring fitness routine across 2+ experiences -> pattern."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I have maintained my daily 5k running routine every morning.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=3),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Going to the gym consistently three times a week on schedule.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    patterns = await service.detect_patterns(user_id, [exp1, exp2], reference_time=now)
+    assert len(patterns) == 1
+    assert patterns[0].domain == PatternDomain.FITNESS.value
+    assert "consistent routine" in patterns[0].description.lower()
