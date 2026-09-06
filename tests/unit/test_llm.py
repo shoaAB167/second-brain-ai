@@ -17,6 +17,7 @@ from personal_ai.llm import (
     LLMStreamChunk,
     get_llm_client,
 )
+from personal_ai.llm.models import ToolCall
 from personal_ai.llm.litellm_client import LiteLLMClient
 
 
@@ -536,4 +537,102 @@ async def test_midstream_fallback_error_retry_stream_start() -> None:
         assert len(chunks) == 1
         assert chunks[0].content == "Success after fallback"
         assert mock_acompletion.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_litellm_formats_structured_tool_messages_properly() -> None:
+    """Verify LiteLLMClient formats tool_calls, tool_call_id, and name in outgoing messages."""
+    mock_response = MagicMock()
+    mock_response.choices = [
+        MagicMock(message=MagicMock(content="Final response after tool execution", tool_calls=None))
+    ]
+    mock_response.usage = None
+
+    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
+        mock_acompletion.return_value = mock_response
+
+        client = LiteLLMClient(provider="openai", model="gpt-4o")
+        messages = [
+            LLMMessage(role="user", content="Search my memory"),
+            LLMMessage(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call_abc123",
+                        name="search_personal_memory",
+                        arguments={"query": "career goals", "limit": 2},
+                    )
+                ],
+            ),
+            LLMMessage(
+                role="tool",
+                content='{"count": 1, "memories": []}',
+                tool_call_id="call_abc123",
+                name="search_personal_memory",
+            ),
+        ]
+
+        response = await client.generate_response(messages=messages)
+
+        assert response.content == "Final response after tool execution"
+        mock_acompletion.assert_called_once()
+        call_kwargs = mock_acompletion.call_args.kwargs
+        sent_messages = call_kwargs["messages"]
+
+        # 1. Assistant message contains tool_calls
+        assert sent_messages[1]["role"] == "assistant"
+        assert sent_messages[1]["tool_calls"] == [
+            {
+                "id": "call_abc123",
+                "type": "function",
+                "function": {
+                    "name": "search_personal_memory",
+                    "arguments": '{"query": "career goals", "limit": 2}',
+                },
+            }
+        ]
+
+        # 2. Tool message contains tool_call_id and name
+        assert sent_messages[2]["role"] == "tool"
+        assert sent_messages[2]["tool_call_id"] == "call_abc123"
+        assert sent_messages[2]["name"] == "search_personal_memory"
+        assert sent_messages[2]["content"] == '{"count": 1, "memories": []}'
+
+
+@pytest.mark.asyncio
+async def test_litellm_parses_malformed_json_tool_arguments_with_parse_error() -> None:
+    """Verify LiteLLMClient parses malformed JSON tool call arguments as parse_error without raising."""
+    raw_tc = MagicMock()
+    raw_tc.id = "call_broken_json"
+    raw_tc.function = MagicMock()
+    raw_tc.function.name = "search_personal_memory"
+    # Unquoted/malformed JSON string from LLM
+    raw_tc.function.arguments = '{query: "invalid", limit: }'
+
+    mock_msg = MagicMock()
+    mock_msg.content = ""
+    mock_msg.tool_calls = [raw_tc]
+
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=mock_msg)]
+    mock_response.usage = None
+
+    with patch("litellm.acompletion", new_callable=AsyncMock) as mock_acompletion:
+        mock_acompletion.return_value = mock_response
+
+        client = LiteLLMClient(provider="openai", model="gpt-4o")
+        messages = [LLMMessage(role="user", content="Corrupted arguments test")]
+
+        response = await client.generate_response(messages=messages)
+
+        assert response.tool_calls is not None
+        assert len(response.tool_calls) == 1
+        tc = response.tool_calls[0]
+        assert tc.id == "call_broken_json"
+        assert tc.name == "search_personal_memory"
+        assert tc.arguments == {}
+        assert tc.parse_error is not None
+        assert "Malformed JSON arguments" in tc.parse_error
+
 

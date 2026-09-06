@@ -3,14 +3,22 @@
 from personal_ai.domain.tool import (
     BaseTool,
     ToolDefinition,
+    ToolExecutionContext,
     ToolPermission,
     ToolResult,
+)
+from personal_ai.tools.memory_search import (
+    SearchPersonalMemoryInput,
+    SearchPersonalMemoryTool,
 )
 from personal_ai.tools.registry import ToolRegistry, create_tool_registry
 
 __all__ = [
     "BaseTool",
+    "SearchPersonalMemoryInput",
+    "SearchPersonalMemoryTool",
     "ToolDefinition",
+    "ToolExecutionContext",
     "ToolPermission",
     "ToolRegistry",
     "ToolResult",

@@ -78,9 +78,11 @@ def get_personal_context_retrieval_service(
     )
 
 
-def get_tool_registry() -> ToolRegistry:
+def get_tool_registry(
+    personal_context_service: PersonalContextRetrievalService = Depends(get_personal_context_retrieval_service),
+) -> ToolRegistry:
     """Dependency provider constructing configured ToolRegistry instance via composition factory."""
-    return create_tool_registry()
+    return create_tool_registry(retrieval_service=personal_context_service)
 
 
 def get_personal_agent(

@@ -3,7 +3,12 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 from personal_ai.core.logger import get_logger
-from personal_ai.domain.tool import BaseTool, ToolDefinition, ToolResult
+from personal_ai.domain.tool import (
+    BaseTool,
+    ToolDefinition,
+    ToolExecutionContext,
+    ToolResult,
+)
 
 logger = get_logger(__name__)
 
@@ -87,8 +92,13 @@ class ToolRegistry:
         """Return public ToolDefinitions for all registered tools without exposing implementations."""
         return [tool.get_definition() for tool in self._tools.values()]
 
-    async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> ToolResult:
-        """Safely execute a registered tool by name with arguments.
+    async def execute_tool(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        context: Optional[ToolExecutionContext] = None,
+    ) -> ToolResult:
+        """Safely execute a registered tool by name with arguments and application context.
 
         Unknown or unregistered tools return a structured ToolResult failure.
         Internal execution exceptions return a safe generic failure without leaking stack traces.
@@ -96,6 +106,7 @@ class ToolRegistry:
         Args:
             name: Tool name to execute.
             arguments: Dictionary of input arguments to pass to the tool.
+            context: Application-controlled execution context (e.g. authenticated user_id).
 
         Returns:
             ToolResult: Structured execution output or structured error.
@@ -110,7 +121,7 @@ class ToolRegistry:
             )
 
         try:
-            return await tool.execute(arguments)
+            return await tool.execute(arguments, context=context)
         except Exception as exc:
             logger.error("Unexpected failure executing tool [name=%s]: %s", name, exc, exc_info=True)
             return ToolResult(
@@ -120,12 +131,15 @@ class ToolRegistry:
             )
 
 
-def create_tool_registry() -> ToolRegistry:
+def create_tool_registry(retrieval_service: Optional[Any] = None) -> ToolRegistry:
     """Factory function constructing and configuring the production ToolRegistry.
 
-    Serves as the explicit composition boundary for registering approved capabilities
-    and preparing for future tool integrations (PR #21).
+    Serves as the explicit composition boundary for registering approved capabilities.
+    If retrieval_service is provided, registers SearchPersonalMemoryTool.
     """
+    from personal_ai.tools.memory_search import SearchPersonalMemoryTool
+
     registry = ToolRegistry()
-    # Explicit composition boundary: future approved tools will be registered here
+    if retrieval_service is not None:
+        registry.register(SearchPersonalMemoryTool(retrieval_service=retrieval_service))
     return registry

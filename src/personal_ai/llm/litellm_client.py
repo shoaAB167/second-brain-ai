@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -26,7 +27,7 @@ from personal_ai.llm.exceptions import (
     LLMServiceUnavailableException,
     LLMTimeoutException,
 )
-from personal_ai.llm.models import LLMMessage, LLMResponse, LLMStreamChunk
+from personal_ai.llm.models import LLMMessage, LLMResponse, LLMStreamChunk, ToolCall
 
 logger = get_logger(__name__)
 
@@ -193,18 +194,53 @@ class LiteLLMClient(LLMClient):
     async def generate_response(
         self,
         messages: List[LLMMessage],
+        tools: Optional[List[Any]] = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Generate text response using LiteLLM with bounded timeout and exponential backoff retries."""
         model_name = self._format_model_name()
-        formatted_messages = [
-            {"role": msg.role, "content": msg.content} for msg in messages
-        ]
+        formatted_messages = []
+        for msg in messages:
+            msg_dict: Dict[str, Any] = {"role": msg.role, "content": msg.content}
+            if msg.tool_call_id:
+                msg_dict["tool_call_id"] = msg.tool_call_id
+            if msg.name:
+                msg_dict["name"] = msg.name
+            if msg.tool_calls:
+                msg_dict["tool_calls"] = [
+                    {
+                        "id": tc.id or "call_default",
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": (
+                                json.dumps(tc.arguments)
+                                if isinstance(tc.arguments, dict)
+                                else str(tc.arguments)
+                            ),
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ]
+            formatted_messages.append(msg_dict)
 
         request_kwargs: Dict[str, Any] = dict(kwargs)
         request_kwargs["model"] = model_name
         request_kwargs["messages"] = formatted_messages
         request_kwargs.setdefault("timeout", self._request_timeout)
+
+        if tools:
+            request_kwargs["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": getattr(t, "name", t.get("name") if isinstance(t, dict) else ""),
+                        "description": getattr(t, "description", t.get("description") if isinstance(t, dict) else ""),
+                        "parameters": getattr(t, "input_schema", t.get("parameters") if isinstance(t, dict) else {}),
+                    },
+                }
+                for t in tools
+            ]
 
         if self._api_key:
             request_kwargs["api_key"] = self._api_key
@@ -253,6 +289,41 @@ class LiteLLMClient(LLMClient):
                 completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
                 total_tokens = getattr(usage, "total_tokens", None) if usage else None
 
+                raw_tool_calls = getattr(response.choices[0].message, "tool_calls", None)
+                parsed_tool_calls: Optional[List[ToolCall]] = None
+                if raw_tool_calls:
+                    parsed_tool_calls = []
+                    for tc in raw_tool_calls:
+                        tc_id = getattr(tc, "id", None) or (tc.get("id") if isinstance(tc, dict) else None)
+                        fn = getattr(tc, "function", None) or (tc.get("function") if isinstance(tc, dict) else {})
+                        fn_name = getattr(fn, "name", None) or (fn.get("name") if isinstance(fn, dict) else "")
+                        fn_args = getattr(fn, "arguments", None) or (fn.get("arguments") if isinstance(fn, dict) else {})
+                        parse_err: Optional[str] = None
+                        if isinstance(fn_args, str):
+                            try:
+                                parsed_args = json.loads(fn_args)
+                                if not isinstance(parsed_args, dict):
+                                    parsed_args = {}
+                                    parse_err = f"Malformed tool arguments for '{fn_name}': expected JSON object, received {type(parsed_args).__name__}"
+                            except Exception as exc:
+                                logger.warning("Failed to parse tool call JSON arguments [tool=%s]: %s", fn_name, exc)
+                                parsed_args = {}
+                                parse_err = f"Malformed JSON arguments for tool '{fn_name}': {str(exc)}"
+                        elif isinstance(fn_args, dict):
+                            parsed_args = fn_args
+                        else:
+                            parsed_args = {}
+                            parse_err = f"Invalid tool arguments type for '{fn_name}': {type(fn_args).__name__}"
+
+                        parsed_tool_calls.append(
+                            ToolCall(
+                                id=tc_id,
+                                name=fn_name,
+                                arguments=parsed_args,
+                                parse_error=parse_err,
+                            )
+                        )
+
                 return LLMResponse(
                     content=content,
                     provider=self._provider,
@@ -261,6 +332,7 @@ class LiteLLMClient(LLMClient):
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     total_tokens=total_tokens,
+                    tool_calls=parsed_tool_calls,
                 )
 
             except Exception as exc:

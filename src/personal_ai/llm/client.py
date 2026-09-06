@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, List
+from typing import Any, AsyncIterator, List, Optional
 
 from personal_ai.llm.models import LLMMessage, LLMResponse, LLMStreamChunk
 
@@ -16,12 +16,14 @@ class LLMClient(ABC):
     async def generate_response(
         self,
         messages: List[LLMMessage],
+        tools: Optional[List[Any]] = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Generate a text response given a sequence of domain LLMMessage objects.
 
         Args:
             messages: List of structured domain messages (system, user, assistant).
+            tools: Optional list of ToolDefinition objects available for structured tool calling.
             **kwargs: Optional execution hyper-parameters (e.g., temperature, max_tokens).
 
         Returns:

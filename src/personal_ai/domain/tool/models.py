@@ -21,6 +21,19 @@ class ToolPermission(str, Enum):
 
 
 @dataclass(frozen=True)
+class ToolExecutionContext:
+    """Application-controlled execution context passed to tools.
+
+    Contains security boundaries such as authenticated user identity.
+    Cannot be specified or overridden by LLM-controlled tool arguments.
+    """
+
+    user_id: uuid.UUID
+    conversation_id: Optional[uuid.UUID] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+@dataclass(frozen=True)
 class ToolResult:
     """Structured result container returned by all tool executions.
 
@@ -125,7 +138,11 @@ class BaseTool(ABC):
         """Internal execution method implemented by concrete tools."""
         pass
 
-    async def execute(self, arguments: Dict[str, Any]) -> ToolResult:
+    async def execute(
+        self,
+        arguments: Dict[str, Any],
+        context: Optional[ToolExecutionContext] = None,
+    ) -> ToolResult:
         """Execute the tool with argument validation and exception safety wrapping.
 
         Guarantees that raw exceptions are caught, logged with stack trace,
@@ -140,7 +157,17 @@ class BaseTool(ABC):
                 metadata={"tool_name": self.name, "permission": self.permission.value},
             )
 
-        kwargs = validated_kwargs if validated_kwargs is not None else {}
+        kwargs = dict(validated_kwargs) if validated_kwargs is not None else {}
+
+        # Forward application-controlled context if accepted by _run
+        try:
+            sig = inspect.signature(self._run)
+            if "context" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                kwargs["context"] = context
+        except Exception as exc:
+            logger.debug("Failed to inspect _run signature for %s: %s", self.name, exc)
 
         try:
             if inspect.iscoroutinefunction(self._run):
