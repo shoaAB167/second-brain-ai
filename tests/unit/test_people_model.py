@@ -129,6 +129,67 @@ def test_person_relationship_type_normalization_and_defaults():
     assert p4.relationship_type == RelationshipType.OTHER
 
 
+def test_person_from_dict_normalization():
+    """Requirement: Person.from_dict() fail-closed normalization for relationship types and invalid inputs."""
+    user_id = uuid.uuid4()
+    person_id = uuid.uuid4()
+
+    # 1. Missing relationship_type => OTHER
+    p1 = Person.from_dict({
+        "id": str(person_id),
+        "user_id": str(user_id),
+        "name": "Alex",
+    })
+    assert p1.relationship_type == RelationshipType.OTHER
+
+    # 2. Lowercase valid string => FRIEND
+    p2 = Person.from_dict({
+        "user_id": str(user_id),
+        "name": "Alex",
+        "relationship_type": "friend",
+    })
+    assert p2.relationship_type == RelationshipType.FRIEND
+
+    # 3. Uppercase valid string => FRIEND
+    p3 = Person.from_dict({
+        "user_id": str(user_id),
+        "name": "Alex",
+        "relationship_type": "FRIEND",
+    })
+    assert p3.relationship_type == RelationshipType.FRIEND
+
+    # 4. Unknown string => OTHER
+    p4 = Person.from_dict({
+        "user_id": str(user_id),
+        "name": "Alex",
+        "relationship_type": "not-a-real-type",
+    })
+    assert p4.relationship_type == RelationshipType.OTHER
+
+    # 5. None relationship_type => OTHER
+    p5 = Person.from_dict({
+        "user_id": str(user_id),
+        "name": "Alex",
+        "relationship_type": None,
+    })
+    assert p5.relationship_type == RelationshipType.OTHER
+
+    # 6. Non-string type => OTHER
+    p6 = Person.from_dict({
+        "user_id": str(user_id),
+        "name": "Alex",
+        "relationship_type": 123,
+    })
+    assert p6.relationship_type == RelationshipType.OTHER
+
+    # 7. Fail closed on missing/invalid user_id or name
+    with pytest.raises(ValueError, match="user_id is required"):
+        Person.from_dict({"name": "Alex"})
+
+    with pytest.raises(ValueError, match="Person name must be a non-empty string"):
+        Person.from_dict({"user_id": str(user_id), "name": ""})
+
+
 # ==============================================================================
 # 3. Repository CRUD Operations with Strict User Isolation
 # ==============================================================================
@@ -343,8 +404,129 @@ def test_experience_people_involved_backward_compatibility():
 
 
 # ==============================================================================
-# 7. Person-Scoped Experience Retrieval & Quality Filtering
+# 7. Person-Scoped Experience Retrieval & Matching Precedence
 # ==============================================================================
+
+@pytest.mark.asyncio
+async def test_person_service_matching_precedence_and_identity():
+    """Requirements: Explicit person_id vs legacy name matching precedence and safety rules.
+
+    A. Explicit person_id match -> included
+    B. Legacy name match -> included
+    C. Explicit wrong person_id + same name -> MUST NOT be included
+    D. Invalid explicit person_id + same name -> MUST NOT be included
+    E. Different name -> excluded
+    F. Foreign user -> excluded
+    G. Multiple people in one experience -> valid explicit person_id works
+    """
+    mock_repo = AsyncMock(spec=PersonRepository)
+    quality_service = MemoryQualityService()
+    service = PersonService(person_repo=mock_repo, memory_quality_service=quality_service)
+
+    user_id = uuid.uuid4()
+    person_a_id = uuid.uuid4()
+    person_b_id = uuid.uuid4()
+
+    person_a = Person(id=person_a_id, user_id=user_id, name="Rahul", relationship_type=RelationshipType.COLLEAGUE)
+    mock_repo.get_by_id.return_value = person_a
+
+    now = _fixed_now()
+
+    # A. Explicit person_id match
+    exp_a = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Discussion with Rahul (person A).",
+        source=ExperienceSource.CHAT,
+        people_involved=[PersonInvolved(name="Rahul", person_id=person_a_id)],
+        created_at=now - timedelta(days=1),
+    )
+
+    # B. Legacy name match (NO person_id)
+    exp_b = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Legacy note mentioning rahul.",
+        source=ExperienceSource.CHAT,
+        people_involved=[PersonInvolved(name="rahul")],
+        created_at=now - timedelta(days=2),
+    )
+
+    # C. Explicit WRONG person_id + same name "Rahul" (Belongs to person B)
+    exp_c = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Discussion with a different Rahul (person B).",
+        source=ExperienceSource.CHAT,
+        people_involved=[PersonInvolved(name="Rahul", person_id=person_b_id)],
+        created_at=now - timedelta(days=3),
+    )
+
+    # D. Invalid explicit person_id + same name "Rahul"
+    exp_d = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Meeting with Rahul with corrupted ID.",
+        source=ExperienceSource.CHAT,
+        people_involved=[{"name": "Rahul", "person_id": "invalid-uuid-string"}],
+        created_at=now - timedelta(days=4),
+    )
+
+    # E. Different name
+    exp_e = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Coffee with Sara.",
+        source=ExperienceSource.CHAT,
+        people_involved=[PersonInvolved(name="Sara")],
+        created_at=now - timedelta(days=5),
+    )
+
+    # F. Foreign user
+    exp_f = Experience(
+        id=uuid.uuid4(),
+        user_id=str(uuid.uuid4()),
+        content="Foreign user experience with Rahul.",
+        source=ExperienceSource.CHAT,
+        people_involved=[PersonInvolved(name="Rahul", person_id=person_a_id)],
+        created_at=now - timedelta(days=6),
+    )
+
+    # G. Multiple people in one experience containing valid person A
+    exp_g = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Team meeting with Sara and Rahul.",
+        source=ExperienceSource.CHAT,
+        people_involved=[
+            PersonInvolved(name="Sara", person_id=uuid.uuid4()),
+            PersonInvolved(name="Rahul", person_id=person_a_id),
+        ],
+        created_at=now - timedelta(days=7),
+    )
+
+    all_exps = [exp_a, exp_b, exp_c, exp_d, exp_e, exp_f, exp_g]
+
+    # Retrieve experiences for Person A
+    retrieved = await service.get_experiences_for_person(
+        user_id=user_id,
+        person_id=person_a_id,
+        experiences=all_exps,
+    )
+
+    # Must include:
+    # - exp_a (explicit person_id match)
+    # - exp_b (legacy name match)
+    # - exp_g (multi-person with valid explicit person_id)
+    #
+    # Must NOT include:
+    # - exp_c (wrong explicit person_id despite same name)
+    # - exp_d (invalid explicit person_id)
+    # - exp_e (different name)
+    # - exp_f (foreign user)
+    assert len(retrieved) == 3
+    assert {e.id for e in retrieved} == {exp_a.id, exp_b.id, exp_g.id}
+
 
 @pytest.mark.asyncio
 async def test_person_service_get_experiences_for_person_and_context():
@@ -358,7 +540,6 @@ async def test_person_service_get_experiences_for_person_and_context():
     person = Person(id=person_id, user_id=user_id, name="Rahul", relationship_type=RelationshipType.COLLEAGUE)
     mock_repo.get_by_id.return_value = person
 
-    # Create candidate experiences
     now = _fixed_now()
 
     # Exp 1: Involves Rahul by person_id (ACTIVE)
@@ -394,28 +575,7 @@ async def test_person_service_get_experiences_for_person_and_context():
         created_at=now - timedelta(days=20),
     )
 
-    # Exp 4: Does NOT involve Rahul (Involves Sara)
-    exp4_other = Experience(
-        id=uuid.uuid4(),
-        user_id=str(user_id),
-        content="Coffee with Sara.",
-        source=ExperienceSource.CHAT,
-        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
-        people_involved=[PersonInvolved(name="Sara")],
-        created_at=now - timedelta(days=1),
-    )
-
-    # Exp 5: Foreign user's experience (User Isolation)
-    exp5_foreign = Experience(
-        id=uuid.uuid4(),
-        user_id=str(uuid.uuid4()),  # foreign user
-        content="Foreign discussion with Rahul.",
-        source=ExperienceSource.CHAT,
-        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
-        people_involved=[PersonInvolved(name="Rahul", person_id=person_id)],
-    )
-
-    all_exps = [exp1, exp2, exp3_superseded, exp4_other, exp5_foreign]
+    all_exps = [exp1, exp2, exp3_superseded]
 
     # Retrieve experiences for Rahul
     retrieved_exps = await service.get_experiences_for_person(
@@ -424,7 +584,7 @@ async def test_person_service_get_experiences_for_person_and_context():
         experiences=all_exps,
     )
 
-    # Exp 1 and Exp 2 matched; superseded, unrelated, and foreign user dropped
+    # Exp 1 and Exp 2 matched; superseded dropped
     assert len(retrieved_exps) == 2
     assert {e.id for e in retrieved_exps} == {exp1.id, exp2.id}
 

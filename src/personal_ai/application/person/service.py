@@ -356,28 +356,50 @@ class PersonService:
 
             for p in exp.people_involved:
                 # Handle PersonInvolved object or dictionary
-                p_id: Optional[uuid.UUID] = None
                 p_name: Optional[str] = None
+                has_explicit_id = False
+                parsed_pid: Optional[uuid.UUID] = None
 
                 if isinstance(p, PersonInvolved):
-                    p_id = p.person_id
                     p_name = p.name
+                    raw_pid = p.person_id
+                    if raw_pid is not None:
+                        has_explicit_id = True
+                        if isinstance(raw_pid, uuid.UUID):
+                            parsed_pid = raw_pid
+                        elif isinstance(raw_pid, str) and raw_pid.strip():
+                            try:
+                                parsed_pid = uuid.UUID(raw_pid.strip())
+                            except (ValueError, AttributeError):
+                                parsed_pid = None
                 elif isinstance(p, dict):
-                    raw_id = p.get("person_id")
-                    if raw_id:
-                        try:
-                            p_id = uuid.UUID(str(raw_id).strip())
-                        except (ValueError, AttributeError):
-                            p_id = None
                     p_name = p.get("name")
+                    if "person_id" in p and p["person_id"] is not None:
+                        raw_pid = p["person_id"]
+                        if isinstance(raw_pid, str):
+                            if raw_pid.strip():
+                                has_explicit_id = True
+                                try:
+                                    parsed_pid = uuid.UUID(raw_pid.strip())
+                                except (ValueError, AttributeError):
+                                    parsed_pid = None
+                        else:
+                            has_explicit_id = True
+                            if isinstance(raw_pid, uuid.UUID):
+                                parsed_pid = raw_pid
 
-                # Match by explicit ID or case-insensitive exact name
-                if p_id and p_id == norm_pid:
-                    matched.append(exp)
-                    break
-                elif p_name and p_name.strip().lower() == person_name_lower:
-                    matched.append(exp)
-                    break
+                # Identity precedence matching rules:
+                if has_explicit_id:
+                    # 1. If explicit person_id exists: match ONLY when it equals requested person_id.
+                    # NEVER fall back to name when an explicit person_id exists or was attempted.
+                    if parsed_pid is not None and parsed_pid == norm_pid:
+                        matched.append(exp)
+                        break
+                else:
+                    # 2. If person_id is absent: allow legacy case-insensitive exact name fallback.
+                    if p_name and isinstance(p_name, str) and p_name.strip().lower() == person_name_lower:
+                        matched.append(exp)
+                        break
 
         return matched
 

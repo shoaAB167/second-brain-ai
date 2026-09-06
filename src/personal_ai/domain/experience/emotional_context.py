@@ -77,12 +77,14 @@ class PersonInvolved:
         if self.role is not None:
             self.role = str(self.role).strip() or None
         if isinstance(self.person_id, str):
-            try:
-                self.person_id = uuid.UUID(self.person_id.strip())
-            except (ValueError, AttributeError):
+            cleaned = self.person_id.strip()
+            if cleaned:
+                try:
+                    self.person_id = uuid.UUID(cleaned)
+                except (ValueError, AttributeError):
+                    self.person_id = cleaned
+            else:
                 self.person_id = None
-        elif self.person_id is not None and not isinstance(self.person_id, uuid.UUID):
-            self.person_id = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to clean dictionary representation."""
@@ -98,15 +100,18 @@ class PersonInvolved:
         """Construct from raw dictionary."""
         if not data or not isinstance(data, dict) or not data.get("name"):
             return None
-        pid: Optional[uuid.UUID] = None
-        if data.get("person_id"):
-            if isinstance(data["person_id"], uuid.UUID):
-                pid = data["person_id"]
-            elif isinstance(data["person_id"], str):
+        pid: Any = None
+        if "person_id" in data and data["person_id"] is not None:
+            raw_val = data["person_id"]
+            if isinstance(raw_val, uuid.UUID):
+                pid = raw_val
+            elif isinstance(raw_val, str) and raw_val.strip():
                 try:
-                    pid = uuid.UUID(data["person_id"].strip())
+                    pid = uuid.UUID(raw_val.strip())
                 except (ValueError, AttributeError):
-                    pid = None
+                    pid = raw_val.strip()
+            else:
+                pid = raw_val
         return cls(
             name=data["name"],
             role=data.get("role"),
