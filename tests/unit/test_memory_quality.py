@@ -130,6 +130,49 @@ def test_deduplicate_identical_content(quality_service, target_user_id):
     assert items[0].importance == "HIGH"
 
 
+def test_preserve_ai_engineer_temporal_progression_variants(quality_service, target_user_id):
+    """Verify that memories with distinct temporal/progression phrasing remain distinguishable."""
+    exp1 = create_test_experience(target_user_id, "I want to become an AI engineer.")
+    exp2 = create_test_experience(target_user_id, "I wanted to become an AI engineer last year.")
+    exp3 = create_test_experience(target_user_id, "I am now preparing for AI engineering interviews.")
+
+    candidates = [(exp1, 0.85), (exp2, 0.82), (exp3, 0.88)]
+
+    items, _ = quality_service.process_candidates(
+        user_id=target_user_id,
+        query="Tell me about my AI career journey.",
+        experience_candidates=candidates,
+        final_limit=5,
+    )
+
+    # All three memories must remain distinct and present
+    assert len(items) == 3
+    contents = {it.content for it in items}
+    assert "I want to become an AI engineer." in contents
+    assert "I wanted to become an AI engineer last year." in contents
+    assert "I am now preparing for AI engineering interviews." in contents
+
+
+def test_preserve_remote_work_temporal_variants(quality_service, target_user_id):
+    """Verify that permanent state vs transient state phrasing are NOT collapsed."""
+    exp_general = create_test_experience(target_user_id, "I work remotely.", lifecycle=ExperienceLifecycle.STABLE)
+    exp_transient = create_test_experience(target_user_id, "I am working remotely this week.", lifecycle=ExperienceLifecycle.TEMPORARY)
+
+    candidates = [(exp_general, 0.88), (exp_transient, 0.87)]
+
+    items, _ = quality_service.process_candidates(
+        user_id=target_user_id,
+        query="Where do I work from?",
+        experience_candidates=candidates,
+        final_limit=5,
+    )
+
+    assert len(items) == 2
+    contents = {it.content for it in items}
+    assert "I work remotely." in contents
+    assert "I am working remotely this week." in contents
+
+
 def test_preserve_meaningful_temporal_variants(quality_service, target_user_id):
     """Verify that candidates with distinct temporal markers (e.g. 2024 vs 2026) are NOT collapsed."""
     exp_2024 = create_test_experience(target_user_id, "I wanted to become an AI engineer in 2024.")
@@ -330,6 +373,99 @@ def test_pattern_and_experience_separation(quality_service, target_user_id):
     assert isinstance(patterns[0], PersonalPatternContextItem)
     assert items[0].content == exp.content
     assert patterns[0].description == pat.description
+
+
+def test_pattern_relevant_query_low_confidence_included(quality_service, target_user_id):
+    """PR24 Gate Invariant: Relevant query with low confidence is admitted to context."""
+    pat = create_test_pattern(
+        target_user_id,
+        "User prefers Python and asynchronous programming",
+        confidence=0.35,
+        status=PatternStatus.HYPOTHESIS,
+    )
+
+    _, patterns = quality_service.process_candidates(
+        user_id=target_user_id,
+        query="Help me write async Python code.",
+        experience_candidates=[],
+        pattern_candidates=[pat],
+        min_pattern_query_relevance=0.20,
+    )
+
+    assert len(patterns) == 1
+    assert patterns[0].pattern_id == pat.id
+
+
+def test_pattern_irrelevant_query_high_confidence_excluded(quality_service, target_user_id):
+    """PR24 Gate Invariant: Irrelevant query with high confidence is excluded by the query relevance gate."""
+    pat = create_test_pattern(
+        target_user_id,
+        "User prefers working in dark mode IDEs",
+        confidence=0.99,
+        status=PatternStatus.CONFIRMED,
+    )
+
+    _, patterns = quality_service.process_candidates(
+        user_id=target_user_id,
+        query="What is the weather like in Tokyo?",
+        experience_candidates=[],
+        pattern_candidates=[pat],
+        min_pattern_query_relevance=0.30,
+    )
+
+    # Irrelevant query -> excluded despite high confidence
+    assert len(patterns) == 0
+
+
+def test_pattern_dimension_match_cannot_bypass_query_relevance_gate(quality_service, target_user_id):
+    """PR24 Invariant: Dimension alignment is a ranking signal only and cannot bypass query relevance gate."""
+    pat = create_test_pattern(
+        target_user_id,
+        "User practices mountain climbing on weekends",
+        domain=PatternDomain.FITNESS,
+        confidence=0.90,
+        status=PatternStatus.CONFIRMED,
+    )
+
+    _, patterns = quality_service.process_candidates(
+        user_id=target_user_id,
+        query="How do I configure nginx reverse proxy?",
+        experience_candidates=[],
+        pattern_candidates=[pat],
+        detected_dimensions=[RetrievalDimension.HABITS],  # Dimension present but query relevance is 0
+        min_pattern_query_relevance=0.30,
+    )
+
+    assert len(patterns) == 0
+
+
+def test_durable_fact_never_eliminated_by_age_alone(quality_service, target_user_id):
+    """Verify STABLE durability facts are never eliminated or penalized by age alone."""
+    three_years_ago = datetime.now(timezone.utc) - timedelta(days=1095)
+    name_exp = create_test_experience(
+        target_user_id,
+        "My name is Shoaib.",
+        lifecycle=ExperienceLifecycle.STABLE,
+        created_at=three_years_ago,
+    )
+    skill_exp = create_test_experience(
+        target_user_id,
+        "I use React and TypeScript for frontend development.",
+        lifecycle=ExperienceLifecycle.STABLE,
+        created_at=three_years_ago,
+    )
+
+    items, _ = quality_service.process_candidates(
+        user_id=target_user_id,
+        query="Who am I and what do I use?",
+        experience_candidates=[(name_exp, 0.90), (skill_exp, 0.88)],
+    )
+
+    assert len(items) == 2
+    assert items[0].experience_id == name_exp.id
+    assert items[1].experience_id == skill_exp.id
+    assert items[0].score >= 0.70
+    assert items[1].score >= 0.70
 
 
 # ==============================================================================
