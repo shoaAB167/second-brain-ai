@@ -143,13 +143,13 @@ class PersonalPatternService:
         self._pattern_repo = pattern_repository or pattern_repo
 
     def _normalize_user_id(self, user_id: Any) -> Optional[uuid.UUID]:
-        """Convert any user_id representation to UUID safely."""
+        """Convert any user_id representation to UUID safely, returning None for missing or malformed values."""
         if isinstance(user_id, uuid.UUID):
             return user_id
-        if isinstance(user_id, str):
+        if isinstance(user_id, str) and user_id.strip():
             try:
-                return uuid.UUID(user_id)
-            except ValueError:
+                return uuid.UUID(user_id.strip())
+            except (ValueError, AttributeError, TypeError):
                 return None
         return None
 
@@ -195,13 +195,13 @@ class PersonalPatternService:
         cutoff_date = ref - timedelta(days=max_lookback_days)
 
         for exp in experiences:
-            # Enforce user isolation: User A cannot use User B's experiences
-            exp_user = self._normalize_user_id(exp.user_id)
-            if exp_user is not None and exp_user != user_id:
+            # Enforce strict user isolation: missing, malformed, or mismatched user_id must fail closed
+            exp_user = self._normalize_user_id(getattr(exp, "user_id", None))
+            if exp_user is None or exp_user != user_id:
                 logger.warning(
-                    "User isolation violation prevented: experience user_id mismatch [expected=%s, got=%s]",
+                    "User isolation violation prevented: experience user_id mismatch or invalid [expected=%s, got=%s]",
                     user_id,
-                    exp.user_id,
+                    getattr(exp, "user_id", None),
                 )
                 continue
 
@@ -444,13 +444,14 @@ class PersonalPatternService:
         Returns:
             PersonalPattern: Updated pattern entity.
         """
-        # User isolation invariant
-        exp_user = self._normalize_user_id(new_experience.user_id)
-        if exp_user is not None and exp_user != pattern.user_id:
+        # User isolation invariant: Fail-closed verification that experience user_id matches pattern user_id
+        exp_user = self._normalize_user_id(getattr(new_experience, "user_id", None))
+        pattern_user = self._normalize_user_id(getattr(pattern, "user_id", None))
+        if exp_user is None or pattern_user is None or exp_user != pattern_user:
             logger.warning(
                 "User isolation violation prevented during evidence evaluation: pattern user_id %s != experience user_id %s",
-                pattern.user_id,
-                new_experience.user_id,
+                getattr(pattern, "user_id", None),
+                getattr(new_experience, "user_id", None),
             )
             return pattern
 
