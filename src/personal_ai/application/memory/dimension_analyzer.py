@@ -1,5 +1,5 @@
 import re
-from typing import List, Optional, Set
+from typing import Any, List, Optional, Set
 
 from personal_ai.domain.experience import Experience, ExperienceType, RetrievalDimension
 from personal_ai.llm.models import LLMMessage
@@ -199,3 +199,121 @@ class QueryDimensionAnalyzer:
             matched.add(RetrievalDimension.PAST_EXPERIENCES)
 
         return sorted(list(matched), key=lambda d: d.value)
+
+    _PATTERN_DOMAIN_DIMENSIONS = {
+        "CAREER": [
+            RetrievalDimension.GOALS,
+            RetrievalDimension.PROJECTS,
+            RetrievalDimension.DECISIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "FITNESS": [
+            RetrievalDimension.HABITS,
+            RetrievalDimension.CURRENT_STATE,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "RELATIONSHIPS": [
+            RetrievalDimension.RELATIONSHIPS,
+            RetrievalDimension.EMOTIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "HEALTH": [
+            RetrievalDimension.CURRENT_STATE,
+            RetrievalDimension.HABITS,
+            RetrievalDimension.EMOTIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "PROJECTS": [
+            RetrievalDimension.PROJECTS,
+            RetrievalDimension.GOALS,
+            RetrievalDimension.DECISIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "LEARNING": [
+            RetrievalDimension.GOALS,
+            RetrievalDimension.PROJECTS,
+            RetrievalDimension.HABITS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "FINANCE": [
+            RetrievalDimension.GOALS,
+            RetrievalDimension.CONSTRAINTS,
+            RetrievalDimension.DECISIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "SOCIAL": [
+            RetrievalDimension.RELATIONSHIPS,
+            RetrievalDimension.EMOTIONS,
+            RetrievalDimension.PAST_EXPERIENCES,
+        ],
+        "GENERAL": [
+            RetrievalDimension.PERSONALITY,
+            RetrievalDimension.PAST_EXPERIENCES,
+            RetrievalDimension.CURRENT_STATE,
+        ],
+    }
+
+    def match_pattern_dimensions(self, pattern: Any) -> List[RetrievalDimension]:
+        """Map a PersonalPattern entity's domain to matching RetrievalDimensions."""
+        dom_str = (
+            pattern.domain.value if hasattr(pattern.domain, "value") else str(getattr(pattern, "domain", "GENERAL") or "GENERAL")
+        ).upper().strip()
+
+        matched = self._PATTERN_DOMAIN_DIMENSIONS.get(dom_str, [RetrievalDimension.PAST_EXPERIENCES])
+        return sorted(list(set(matched)), key=lambda d: d.value)
+
+    def calculate_pattern_query_relevance(
+        self,
+        query: str,
+        pattern: Any,
+        conversation_context: Optional[List[LLMMessage]] = None,
+    ) -> float:
+        """Calculate deterministic lexical and thematic relevance between user query and pattern."""
+        if not query or not query.strip():
+            return 0.0
+
+        text = query.lower().strip()
+        if conversation_context:
+            for msg in reversed(conversation_context[-2:]):
+                if msg.content:
+                    text += " " + msg.content.lower().strip()
+
+        # Extract words from query (length >= 3)
+        query_words = set(re.findall(r"\b[a-z]{3,}\b", text))
+        if not query_words:
+            return 0.0
+
+        # Pattern text and domain words
+        pat_desc = (getattr(pattern, "description", "") or "").lower()
+        pat_dom = (
+            pattern.domain.value if hasattr(getattr(pattern, "domain", ""), "value") else str(getattr(pattern, "domain", "") or "")
+        ).lower()
+        pat_words = set(re.findall(r"\b[a-z]{3,}\b", f"{pat_desc} {pat_dom}"))
+
+        # Domain-specific thematic indicator keywords in query
+        domain_thematic_keywords = {
+            "CAREER": {"career", "goal", "goals", "job", "work", "profession", "milestone", "stress", "salary", "promotion", "architect", "engineer", "interview"},
+            "PROJECTS": {"project", "projects", "code", "coding", "deadline", "consistency", "inconsistent", "delay", "procrastinate", "momentum", "stalled", "surge", "intensity", "second", "brain", "app", "system"},
+            "FITNESS": {"fitness", "gym", "workout", "exercise", "run", "running", "routine", "habit", "schedule", "lifting", "training", "streak", "cardio"},
+            "HEALTH": {"health", "sleep", "slept", "insomnia", "tired", "energy", "exhausted", "fatigue", "drain", "groggy", "recovery", "rest"},
+            "RELATIONSHIPS": {"relationship", "relationships", "family", "friend", "friends", "sister", "brother", "partner", "social", "boss", "colleague", "coworker"},
+            "LEARNING": {"learning", "study", "studying", "focus", "morning", "learn", "course", "skill", "deep", "practice", "read", "reading"},
+            "FINANCE": {"finance", "financial", "budget", "money", "spend", "saving", "salary", "expense", "cost"},
+            "SOCIAL": {"social", "friends", "meetup", "people", "gather", "community"},
+            "GENERAL": {"routine", "habit", "behavior", "tendency", "pattern"},
+        }
+
+        overlap = query_words.intersection(pat_words)
+        thematic_kw = domain_thematic_keywords.get(pat_dom.upper(), set())
+        thematic_overlap = query_words.intersection(thematic_kw)
+
+        if not overlap and not thematic_overlap:
+            return 0.0
+
+        score = 0.0
+        if thematic_overlap:
+            score += min(len(thematic_overlap) * 0.35, 0.70)
+        if overlap:
+            score += min(len(overlap) * 0.20, 0.60)
+
+        return round(min(score, 1.0), 4)

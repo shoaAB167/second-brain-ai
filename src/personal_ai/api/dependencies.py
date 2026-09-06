@@ -76,11 +76,13 @@ def get_personal_context_retrieval_service(
     session: AsyncSession = Depends(get_db_session),
     embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
 ) -> PersonalContextRetrievalService:
-    """Dependency provider constructing PersonalContextRetrievalService for PR #18."""
+    """Dependency provider constructing PersonalContextRetrievalService for PR #18 & PR #24."""
     repo = SQLAlchemyExperienceRepository(session=session)
+    pattern_repo = SQLAlchemyPersonalPatternRepository(session=session)
     return PersonalContextRetrievalService(
         embedding_provider=embedding_provider,
         experience_repo=repo,
+        pattern_repo=pattern_repo,
     )
 
 

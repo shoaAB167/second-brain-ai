@@ -143,11 +143,49 @@ class PersonalPattern:
 
 ---
 
-## 7. Nature of PR #23 & Next Steps
+## 7. Conversational Context Integration (PR #24)
 
-> [!NOTE]
-> **Conservative Foundation**: The current deterministic keyword and thematic engine is intentionally scoped as a **first conservative pattern hypothesis engine**, not a general intelligence or psychological profiling system. It provides an auditable, evidence-backed foundation that strictly prevents ungrounded assumptions.
+PR #24 connects the Personal Pattern foundation to the conversational Personal Model pipeline.
 
-- In PR #23, pattern detection and persistence are decoupled and available via `PersonalPatternService` and `PersonalPatternRepository`.
-- Patterns are **NOT** automatically injected into prompt context in this PR.
-- Future PRs will integrate validated personal patterns into `PersonalContextRetrievalService` and `PersonalAgent` to allow nuanced, personalized assistance.
+```mermaid
+graph TD
+    UserQuery["User Message"] --> Analyzer["QueryDimensionAnalyzer"]
+    Analyzer --> Retrieval["PersonalContextRetrievalService"]
+
+    subgraph Parallel Scoped Retrieval
+        Retrieval --> VectorSearch["Experience Retrieval<br>(pgvector + multi-signal reranking)"]
+        Retrieval --> PatternSearch["Personal Pattern Retrieval<br>(user-scoped, active, query & dimension aware)"]
+    end
+
+    VectorSearch --> PersonalCtx["PersonalContext<br>├── items (memories)<br>└── patterns (hypotheses)"]
+    PatternSearch --> PersonalCtx
+
+    PersonalCtx --> Builder["PersonalContextBuilder<br>(Separated XML + Hypothesis Safety Rules)"]
+    Builder --> Agent["PersonalAgent<br>(Deterministic ResponseMode + Tool Safety)"]
+    Agent --> LLM["Model-Agnostic LLM"]
+```
+
+### Layer Definitions
+
+1. **Experience**:
+   - Primary episodic observation (*"I skipped AI study yesterday"*).
+2. **Personal Pattern**:
+   - Higher-level behavioral hypothesis derived from repeated observations (*"Project activity appears to become inconsistent after periods of initial activity"*).
+3. **Personal Context**:
+   - The bounded, dimension-aware context assembled for the current conversation containing relevant memories and active pattern hypotheses.
+4. **Personal Agent**:
+   - Response mode orchestration layer deciding how the model engages (factual, emotional, decision-oriented, or personalized).
+
+### Key Architectural Invariants for PR #24
+
+- **Active Patterns Only**: Only `HYPOTHESIS` and `CONFIRMED` patterns are eligible for conversational context. `WEAKENED` and `SUPERSEDED` patterns remain stored in the database for history but are excluded from active prompts.
+- **Deterministic Pattern Ranking**:
+  $$\text{Score} = 0.40 \times \text{query\_relevance} + 0.30 \times \text{dimension\_alignment} + 0.20 \times \text{confidence} + 0.10 \times \text{evidence\_strength}$$
+- **Prompt Safety & Uncertainty**:
+  - Patterns are explicitly labeled as hypotheses derived from repeated observations.
+  - The model is instructed to treat patterns as contextual evidence rather than absolute facts, permanent traits, or clinical diagnoses.
+  - Pattern text is passive reference data and can never execute as system instructions or invoke tools.
+- **Strict User Isolation**:
+  - All pattern and memory lookups are strictly scoped to the authenticated `user_id`.
+- **Fail-Safe Resilience**:
+  - If pattern retrieval fails or no patterns match, memory retrieval continues normally and context includes zero patterns without failing the chat request.

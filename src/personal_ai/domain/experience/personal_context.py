@@ -43,6 +43,22 @@ class PersonalContextItem:
 
 
 @dataclass
+class PersonalPatternContextItem:
+    """A scored and dimension-mapped pattern hypothesis or confirmed pattern included in PersonalContext."""
+
+    pattern_id: uuid.UUID
+    description: str
+    domain: str
+    confidence: float
+    status: str
+    evidence_count: int
+    score: float = 0.0
+    matched_dimensions: List[RetrievalDimension] = field(default_factory=list)
+    first_observed_at: Optional[datetime] = None
+    last_observed_at: Optional[datetime] = None
+
+
+@dataclass
 class PersonalContext:
     """Bounded, dimension-aware personal context assembled for an authenticated user query."""
 
@@ -50,9 +66,11 @@ class PersonalContext:
     query: str
     detected_dimensions: List[RetrievalDimension] = field(default_factory=list)
     items: List[PersonalContextItem] = field(default_factory=list)
+    patterns: List[PersonalPatternContextItem] = field(default_factory=list)
     total_candidates: int = 0
+    total_pattern_candidates: int = 0
 
     @property
     def is_empty(self) -> bool:
-        """Return True if no context items were retrieved."""
-        return len(self.items) == 0
+        """Return True if no context items (memories or patterns) were retrieved."""
+        return len(self.items) == 0 and len(self.patterns) == 0
