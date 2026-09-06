@@ -497,14 +497,18 @@ class PersonalPatternService:
 
         Guarantees:
         - If superseded_by_id is None / missing, raises ValueError (fails closed to prevent dangling FKs).
-        - If a PersonalPattern is supplied, its UUID is extracted.
+        - If a PersonalPattern is supplied as superseded_by_id, verifies its user_id matches the old pattern user_id.
+        - Rejects self-superseding (old pattern ID == replacement pattern ID).
+        - If repository is used: fetches and verifies the replacement pattern actually exists for the authenticated user_id.
         - Preserves existing user isolation and history.
         """
-        # Resolve replacement pattern ID
+        # Resolve replacement pattern ID and optional entity
         if superseded_by_id is None:
             raise ValueError("superseded_by_id is required to supersede a pattern.")
 
+        replacement_entity: Optional[PersonalPattern] = None
         if isinstance(superseded_by_id, PersonalPattern):
+            replacement_entity = superseded_by_id
             target_sup_id = superseded_by_id.id
         elif isinstance(superseded_by_id, str):
             try:
@@ -520,17 +524,59 @@ class PersonalPatternService:
 
         if isinstance(pattern_id, PersonalPattern):
             old_pattern = pattern_id
+            target_user_id = old_pattern.user_id
+
+            # Reject self-superseding
+            if target_sup_id == old_pattern.id:
+                raise ValueError("A pattern cannot supersede itself.")
+
+            # If replacement object was passed directly, enforce user isolation
+            if replacement_entity is not None and replacement_entity.user_id != old_pattern.user_id:
+                raise ValueError(
+                    f"Cross-user pattern superseding violation: replacement pattern belongs to user {replacement_entity.user_id}, not {old_pattern.user_id}."
+                )
+
+            # If repository is configured, verify replacement pattern exists and belongs to same user
+            if self._pattern_repo is not None:
+                verified_replacement = await self._pattern_repo.get_by_id(pattern_id=target_sup_id, user_id=target_user_id)
+                if not verified_replacement:
+                    raise ValueError(
+                        f"Replacement pattern {target_sup_id} not found for user {target_user_id}."
+                    )
+
             old_pattern.supersede_with(new_pattern_id=target_sup_id)
             if self._pattern_repo:
                 await self._pattern_repo.update(old_pattern)
             return old_pattern
 
-        if not self._pattern_repo or not user_id:
+        # pattern_id is a UUID
+        target_uuid = pattern_id if isinstance(pattern_id, uuid.UUID) else uuid.UUID(str(pattern_id))
+
+        if not user_id:
+            raise ValueError("user_id is required when superseding a pattern by ID.")
+
+        # Reject self-superseding
+        if target_sup_id == target_uuid:
+            raise ValueError("A pattern cannot supersede itself.")
+
+        # If replacement object was passed directly, enforce user isolation
+        if replacement_entity is not None and replacement_entity.user_id != user_id:
+            raise ValueError(
+                f"Cross-user pattern superseding violation: replacement pattern belongs to user {replacement_entity.user_id}, not {user_id}."
+            )
+
+        if not self._pattern_repo:
             return None
 
-        old_pat = await self._pattern_repo.get_by_id(pattern_id=pattern_id, user_id=user_id)
+        # Verify old pattern exists for user
+        old_pat = await self._pattern_repo.get_by_id(pattern_id=target_uuid, user_id=user_id)
         if not old_pat:
-            return None
+            raise ValueError(f"Original pattern {target_uuid} not found for user {user_id}.")
+
+        # Verify replacement pattern exists for user
+        verified_replacement = await self._pattern_repo.get_by_id(pattern_id=target_sup_id, user_id=user_id)
+        if not verified_replacement:
+            raise ValueError(f"Replacement pattern {target_sup_id} not found for user {user_id}.")
 
         old_pat.supersede_with(new_pattern_id=target_sup_id)
         return await self._pattern_repo.update(old_pat)

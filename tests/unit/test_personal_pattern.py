@@ -573,19 +573,31 @@ async def test_historical_pattern_is_not_deleted():
     )
     await repo.save(pattern)
 
-    # Supersede with a newer pattern
-    new_pattern_id = uuid.uuid4()
+    # Save replacement pattern in repository first
+    new_pattern = PersonalPattern(
+        user_id=user_id,
+        description="Updated project consistency pattern.",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4(), uuid.uuid4()],
+        confidence=0.65,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=10),
+        last_observed_at=now,
+    )
+    await repo.save(new_pattern)
+
+    # Supersede with the newer pattern
     await service.supersede_pattern(
         pattern_id=pattern.id,
         user_id=user_id,
-        superseded_by_id=new_pattern_id,
+        superseded_by_id=new_pattern.id,
     )
 
     # Verify old pattern still exists in repository with SUPERSEDED status
     old_pattern = await repo.get_by_id(pattern.id, user_id=user_id)
     assert old_pattern is not None
     assert old_pattern.status == PatternStatus.SUPERSEDED
-    assert old_pattern.superseded_by_id == new_pattern_id
+    assert old_pattern.superseded_by_id == new_pattern.id
 
     # Active patterns query filters it out, but list_by_user returns it
     active_patterns = await repo.get_active_patterns(user_id=user_id)
@@ -1431,6 +1443,170 @@ async def test_supersede_without_valid_replacement_id_fails_closed():
     # Pattern remains unmodified (not SUPERSEDED, no dangling FK)
     assert pattern.status == PatternStatus.HYPOTHESIS
     assert pattern.superseded_by_id is None
+
+
+@pytest.mark.asyncio
+async def test_supersede_nonexistent_replacement_id_raises_value_error():
+    """Requirement 1: Nonexistent replacement ID -> ValueError."""
+    repo = InMemoryPersonalPatternRepository()
+    service = PersonalPatternService(pattern_repo=repo)
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    old_pattern = PersonalPattern(
+        user_id=user_id,
+        description="Original project pattern",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=5),
+        last_observed_at=now,
+    )
+    await repo.create(old_pattern)
+
+    nonexistent_replacement_id = uuid.uuid4()
+
+    with pytest.raises(ValueError, match="Replacement pattern .* not found for user"):
+        await service.supersede_pattern(
+            pattern_id=old_pattern.id,
+            user_id=user_id,
+            superseded_by_id=nonexistent_replacement_id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_supersede_cross_user_replacement_pattern_raises_value_error():
+    """Requirement 2: Cross-user replacement pattern -> ValueError."""
+    repo = InMemoryPersonalPatternRepository()
+    service = PersonalPatternService(pattern_repo=repo)
+    user_a = uuid.uuid4()
+    user_b = uuid.uuid4()
+    now = _fixed_now()
+
+    # User A's old pattern
+    user_a_old = PersonalPattern(
+        user_id=user_a,
+        description="User A old pattern",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=5),
+        last_observed_at=now,
+    )
+    await repo.create(user_a_old)
+
+    # User B's pattern (different user)
+    user_b_replacement = PersonalPattern(
+        user_id=user_b,
+        description="User B replacement pattern",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.75,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=5),
+        last_observed_at=now,
+    )
+    await repo.create(user_b_replacement)
+
+    # Attempt 1: Passing User B's UUID when superseding User A's pattern by ID
+    with pytest.raises(ValueError, match="Replacement pattern .* not found for user"):
+        await service.supersede_pattern(
+            pattern_id=user_a_old.id,
+            user_id=user_a,
+            superseded_by_id=user_b_replacement.id,
+        )
+
+    # Attempt 2: Passing User B's pattern object directly to User A's pattern object
+    with pytest.raises(ValueError, match="Cross-user pattern superseding violation"):
+        await service.supersede_pattern(
+            pattern_id=user_a_old,
+            superseded_by_id=user_b_replacement,
+        )
+
+
+@pytest.mark.asyncio
+async def test_supersede_self_superseding_raises_value_error():
+    """Requirement 3: Self-superseding -> ValueError."""
+    repo = InMemoryPersonalPatternRepository()
+    service = PersonalPatternService(pattern_repo=repo)
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    pattern = PersonalPattern(
+        user_id=user_id,
+        description="Self pattern",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=5),
+        last_observed_at=now,
+    )
+    await repo.create(pattern)
+
+    # Object level
+    with pytest.raises(ValueError, match="A pattern cannot supersede itself"):
+        pattern.supersede_with(pattern.id)
+
+    # Service level
+    with pytest.raises(ValueError, match="A pattern cannot supersede itself"):
+        await service.supersede_pattern(
+            pattern_id=pattern.id,
+            user_id=user_id,
+            superseded_by_id=pattern.id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_supersede_valid_same_user_replacement_succeeds():
+    """Requirement 4: Valid same-user replacement -> succeeds."""
+    repo = InMemoryPersonalPatternRepository()
+    service = PersonalPatternService(pattern_repo=repo)
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    old_pattern = PersonalPattern(
+        user_id=user_id,
+        description="Original project pattern",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=10),
+        last_observed_at=now - timedelta(days=5),
+    )
+    await repo.create(old_pattern)
+
+    replacement_pattern = PersonalPattern(
+        user_id=user_id,
+        description="Refined project pattern",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4(), uuid.uuid4()],
+        confidence=0.72,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=10),
+        last_observed_at=now,
+    )
+    await repo.create(replacement_pattern)
+
+    # Execute superseding
+    result = await service.supersede_pattern(
+        pattern_id=old_pattern.id,
+        user_id=user_id,
+        superseded_by_id=replacement_pattern.id,
+    )
+
+    assert result is not None
+    assert result.status == PatternStatus.SUPERSEDED
+    assert result.superseded_by_id == replacement_pattern.id
+
+    # Verify persistence state
+    stored_old = await repo.get_by_id(old_pattern.id, user_id=user_id)
+    assert stored_old is not None
+    assert stored_old.status == PatternStatus.SUPERSEDED
+    assert stored_old.superseded_by_id == replacement_pattern.id
 
 
 @pytest.mark.asyncio

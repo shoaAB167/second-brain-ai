@@ -134,8 +134,11 @@ class PersonalPattern:
                 new_pattern_id = uuid.UUID(new_pattern_id)
             except ValueError:
                 raise ValueError(f"Invalid new_pattern_id UUID: '{new_pattern_id}'.")
-        elif not isinstance(new_pattern_id, uuid.UUID):
+        if not isinstance(new_pattern_id, uuid.UUID):
             raise ValueError(f"new_pattern_id must be a UUID, got {type(new_pattern_id).__name__}")
+
+        if new_pattern_id == self.id:
+            raise ValueError("A pattern cannot supersede itself.")
 
         self.status = PatternStatus.SUPERSEDED
         self.superseded_by_id = new_pattern_id
