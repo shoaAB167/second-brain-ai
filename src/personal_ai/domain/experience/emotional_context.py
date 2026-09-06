@@ -1,5 +1,6 @@
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
+import uuid
 
 
 @dataclass
@@ -63,10 +64,11 @@ class EmotionalContext:
 
 @dataclass
 class PersonInvolved:
-    """Domain model representing contextual individuals associated with an experience."""
+    """Domain model representing contextual individuals associated with an experience (PR #12 & PR #29)."""
 
     name: str
     role: Optional[str] = None
+    person_id: Optional[uuid.UUID] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -74,17 +76,39 @@ class PersonInvolved:
         self.name = self.name.strip()
         if self.role is not None:
             self.role = str(self.role).strip() or None
+        if isinstance(self.person_id, str):
+            try:
+                self.person_id = uuid.UUID(self.person_id.strip())
+            except (ValueError, AttributeError):
+                self.person_id = None
+        elif self.person_id is not None and not isinstance(self.person_id, uuid.UUID):
+            self.person_id = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to clean dictionary representation."""
-        return {k: v for k, v in asdict(self).items() if v is not None}
+        res: Dict[str, Any] = {"name": self.name}
+        if self.role is not None:
+            res["role"] = self.role
+        if self.person_id is not None:
+            res["person_id"] = str(self.person_id)
+        return res
 
     @classmethod
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["PersonInvolved"]:
         """Construct from raw dictionary."""
         if not data or not isinstance(data, dict) or not data.get("name"):
             return None
+        pid: Optional[uuid.UUID] = None
+        if data.get("person_id"):
+            if isinstance(data["person_id"], uuid.UUID):
+                pid = data["person_id"]
+            elif isinstance(data["person_id"], str):
+                try:
+                    pid = uuid.UUID(data["person_id"].strip())
+                except (ValueError, AttributeError):
+                    pid = None
         return cls(
             name=data["name"],
             role=data.get("role"),
+            person_id=pid,
         )
