@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple
 import uuid
 
 from personal_ai.application.memory.quality_service import MemoryQualityService
@@ -8,7 +8,7 @@ from personal_ai.core.logger import get_logger
 from personal_ai.domain.experience import Experience
 from personal_ai.domain.pattern.entity import PersonalPattern
 from personal_ai.domain.pattern.enums import PatternStatus
-from personal_ai.domain.reflection.enums import ReflectionStatus, ReflectionType
+from personal_ai.domain.reflection.enums import ReflectionType
 from personal_ai.domain.reflection.models import Reflection
 
 logger = get_logger(__name__)
@@ -77,8 +77,8 @@ class ReflectionService:
         "suggests", "revisit", "schedule", "track", "check", "looking", "trying",
     }
 
-    # Explicit phrases indicating inactivity or stalled progress
-    _INACTIVITY_PHRASES: List[str] = [
+    # Explicit phrases indicating sustained inactivity or stalled progress
+    _SUSTAINED_INACTIVITY_PHRASES: List[str] = [
         "inactive",
         "no progress",
         "haven't touched",
@@ -96,6 +96,17 @@ class ReflectionService:
         "haven't exercised",
         "not touched for",
         "haven't done",
+    ]
+
+    # Patterns indicating short temporary pause (should NOT be treated as pattern weakening)
+    _SHORT_TEMPORARY_PAUSE_PATTERNS: List[str] = [
+        r"\bfor\s+(1|one)\s+day\b",
+        r"\bfor\s+a\s+day\b",
+        r"\btook\s+a\s+day\s+off\b",
+        r"\btaking\s+a\s+day\s+off\b",
+        r"\b(briefly|a\s+moment|short\s+break|brief\s+break|brief\s+pause|paused\s+briefly)\b",
+        r"\b(was\s+busy\s+yesterday|busy\s+yesterday)\b",
+        r"\bjust\s+for\s+today\b",
     ]
 
     # Time slot clusters
@@ -129,7 +140,7 @@ class ReflectionService:
                 return slot_name
         return None
 
-    def _calculate_confidence(self, evidence_count: int, base: float = 0.55) -> float:
+    def _calculate_confidence(self, evidence_count: int) -> float:
         """Calculate deterministic bounded confidence from evidence count.
 
         Count scale:
@@ -151,7 +162,7 @@ class ReflectionService:
         elif evidence_count == 5:
             return 0.80
         else:
-            return min(0.86, 0.80 + (evidence_count - 5) * 0.02)
+            return min(0.86, round(0.80 + (evidence_count - 5) * 0.02, 2))
 
     def reflect_on_pattern(
         self,
@@ -167,12 +178,18 @@ class ReflectionService:
             user_id: Authenticated user UUID.
             pattern: PersonalPattern entity hypothesis.
             experiences: List of quality-filtered, user-isolated experiences.
-            time_window_days: Number of days in the reflection lookback window.
+            time_window_days: Number of days in the reflection lookback window (1 to 90).
             reference_time: Optional reference UTC timestamp (defaults to current UTC time).
 
         Returns:
             Optional[Reflection]: Generated reflection if evidence threshold is met, else None.
+
+        Raises:
+            ValueError: If time_window_days is not an integer between 1 and 90.
         """
+        if not isinstance(time_window_days, int) or isinstance(time_window_days, bool) or not (1 <= time_window_days <= 90):
+            raise ValueError(f"time_window_days must be an integer between 1 and 90, got: {time_window_days}")
+
         norm_user = _normalize_user_id(user_id)
         if not norm_user:
             return None
@@ -232,9 +249,18 @@ class ReflectionService:
             if not pat_subjects.intersection(exp_subjects):
                 continue
 
-            # Check for explicit inactivity / stall
-            if any(phrase in combined_text for phrase in self._INACTIVITY_PHRASES):
+            # Check for short temporary pause (should NOT count as pattern weakening)
+            is_short_pause = any(re.search(pat, combined_text) for pat in self._SHORT_TEMPORARY_PAUSE_PATTERNS)
+
+            # Check for explicit sustained inactivity / stall
+            has_inactivity = any(phrase in combined_text for phrase in self._SUSTAINED_INACTIVITY_PHRASES)
+
+            if has_inactivity and not is_short_pause:
                 inactivity_exps.append(exp)
+                continue
+
+            # If it's a short temporary pause without sustained inactivity, ignore it for weakening/conflict
+            if is_short_pause:
                 continue
 
             # Check time slot compatibility
@@ -291,7 +317,7 @@ class ReflectionService:
                 domain=pattern.domain,
             )
 
-        # Case C: PATTERN_WEAKENING (>= 2 inactivity / stall observations)
+        # Case C: PATTERN_WEAKENING (>= 2 sustained inactivity / stall observations)
         if len(inactivity_exps) >= 2:
             obs_text = f"Recent {subject_display} activity appears lower than the established pattern."
             ev_ids = [e.id for e in inactivity_exps]
@@ -346,18 +372,24 @@ class ReflectionService:
                 ↓
             Generate Traceable Reflections
                 ↓
-            Deduplicate Reflections
+            Deduplicate Reflections (Fail closed on missing pattern_ids)
 
         Args:
             user_id: Authenticated user UUID for strict isolation.
             experiences: List of candidate Experience entities.
             patterns: List of candidate PersonalPattern entities.
-            time_window_days: Window lookback in days (default 30, max 90).
+            time_window_days: Window lookback in days (1 to 90).
             reference_time: Optional reference UTC timestamp (defaults to current UTC time).
 
         Returns:
             List[Reflection]: Traceable, user-isolated reflection entities.
+
+        Raises:
+            ValueError: If time_window_days is not an integer between 1 and 90.
         """
+        if not isinstance(time_window_days, int) or isinstance(time_window_days, bool) or not (1 <= time_window_days <= 90):
+            raise ValueError(f"time_window_days must be an integer between 1 and 90, got: {time_window_days}")
+
         norm_user = _normalize_user_id(user_id)
         if not norm_user:
             logger.warning("ReflectionService.analyze called without valid user_id: %s", user_id)
@@ -366,8 +398,6 @@ class ReflectionService:
         if not experiences or not patterns:
             return []
 
-        # Bound time_window_days
-        window_days = max(1, min(int(time_window_days), 90))
         now = reference_time or _utc_now()
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
@@ -393,7 +423,7 @@ class ReflectionService:
             norm_user,
             len(filtered_experiences),
             len(filtered_patterns),
-            window_days,
+            time_window_days,
         )
 
         # 3. Generate reflections for each pattern
@@ -405,18 +435,21 @@ class ReflectionService:
                 user_id=norm_user,
                 pattern=pat,
                 experiences=filtered_experiences,
-                time_window_days=window_days,
+                time_window_days=time_window_days,
                 reference_time=now,
             )
             if ref:
                 raw_reflections.append(ref)
 
-        # 4. In-memory per-analysis deduplication
+        # 4. In-memory per-analysis deduplication (fails closed on missing pattern_ids)
         deduped_reflections: List[Reflection] = []
         seen_keys: Set[Tuple[uuid.UUID, uuid.UUID, ReflectionType, int]] = set()
 
         for ref in raw_reflections:
-            pid = ref.pattern_ids[0] if ref.pattern_ids else uuid.uuid4()
+            if not ref.pattern_ids:
+                logger.warning("Rejected reflection with missing pattern_ids during deduplication.")
+                continue
+            pid = ref.pattern_ids[0]
             dedup_key = (ref.user_id, pid, ref.type, ref.time_window_days)
             if dedup_key not in seen_keys:
                 seen_keys.add(dedup_key)

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 import uuid
 
 from personal_ai.domain.reflection.enums import ReflectionStatus, ReflectionType
@@ -76,7 +76,7 @@ class Reflection:
         self.observation = self.observation.strip()
 
         # 5. Validate confidence strictly between 0.0 and 1.0
-        if not isinstance(self.confidence, (int, float)):
+        if isinstance(self.confidence, bool) or not isinstance(self.confidence, (int, float)):
             raise ValueError(f"Confidence must be a float, got: {type(self.confidence).__name__}")
         if not (0.0 <= float(self.confidence) <= 1.0):
             raise ValueError(f"Reflection confidence must be between 0.0 and 1.0, got: {self.confidence}.")
@@ -126,9 +126,9 @@ class Reflection:
                 normalized_pat_ids.append(norm_pid)
         self.pattern_ids = normalized_pat_ids
 
-        # 8. Validate time_window_days
-        if not isinstance(self.time_window_days, int) or self.time_window_days <= 0:
-            raise ValueError(f"time_window_days must be a positive integer, got: {self.time_window_days}.")
+        # 8. Validate time_window_days (must be integer between 1 and 90)
+        if not isinstance(self.time_window_days, int) or isinstance(self.time_window_days, bool) or not (1 <= self.time_window_days <= 90):
+            raise ValueError(f"time_window_days must be an integer between 1 and 90, got: {self.time_window_days}.")
 
         # 9. Normalize domain
         if self.domain and isinstance(self.domain, str):

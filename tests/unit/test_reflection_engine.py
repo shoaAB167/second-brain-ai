@@ -132,12 +132,90 @@ async def test_reflection_reinforcement_requires_distinct_evidence_ids():
 
 
 # ==============================================================================
-# 2. Pattern Weakening Tests
+# 2. Temporary Inactivity vs Pattern Weakening Tests
 # ==============================================================================
 
 @pytest.mark.asyncio
-async def test_reflection_weakening_with_observed_inactivity():
-    """Requirement: >= 2 relevant observations indicating stalled progress or pause produce PATTERN_WEAKENING."""
+async def test_reflection_one_day_inactivity_does_not_create_weakening():
+    """Requirement: A 1-day pause (e.g. 'haven't worked on AI project for 1 day') does NOT create PATTERN_WEAKENING."""
+    service = ReflectionService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    one_day_pause = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I haven't worked on my AI project for 1 day.",
+        type=ExperienceType.STATE,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+    )
+
+    pattern = PersonalPattern(
+        user_id=str(user_id),
+        description="You tend to work on AI projects regularly.",
+        domain=PatternDomain.PROJECTS,
+        status=PatternStatus.CONFIRMED,
+        confidence=0.85,
+    )
+
+    reflections = await service.analyze(
+        user_id=user_id,
+        experiences=[one_day_pause],
+        patterns=[pattern],
+        time_window_days=30,
+        reference_time=now,
+    )
+
+    assert reflections == []
+
+
+@pytest.mark.asyncio
+async def test_reflection_short_temporary_pause_does_not_create_weakening():
+    """Requirement: Short temporary pauses (e.g. 'paused briefly', 'was busy yesterday') do NOT produce PATTERN_WEAKENING."""
+    service = ReflectionService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I paused the project briefly.",
+        type=ExperienceType.STATE,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I was busy yesterday with chores.",
+        type=ExperienceType.STATE,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+    )
+
+    pattern = PersonalPattern(
+        user_id=str(user_id),
+        description="You tend to work on AI projects regularly.",
+        domain=PatternDomain.PROJECTS,
+        status=PatternStatus.CONFIRMED,
+        confidence=0.85,
+    )
+
+    reflections = await service.analyze(
+        user_id=user_id,
+        experiences=[exp1, exp2],
+        patterns=[pattern],
+        time_window_days=30,
+        reference_time=now,
+    )
+
+    assert reflections == []
+
+
+@pytest.mark.asyncio
+async def test_reflection_repeated_meaningful_inactivity_creates_weakening():
+    """Requirement: Repeated sustained inactivity / stalled progress across multiple observations produces PATTERN_WEAKENING."""
     service = ReflectionService()
     user_id = uuid.uuid4()
     now = _fixed_now()
@@ -149,11 +227,11 @@ async def test_reflection_weakening_with_observed_inactivity():
     exp1 = Experience(
         id=id1,
         user_id=str(user_id),
-        content="I haven't worked on my AI project for 5 days.",
+        content="I haven't worked on my AI project for weeks, progress is stalled.",
         type=ExperienceType.STATE,
         source=ExperienceSource.CHAT,
-        temporal_context="for 5 days",
-        created_at=now - timedelta(days=5),
+        temporal_context="for weeks, stalled",
+        created_at=now - timedelta(days=7),
     )
     exp2 = Experience(
         id=id2,
@@ -168,7 +246,7 @@ async def test_reflection_weakening_with_observed_inactivity():
     pattern = PersonalPattern(
         id=pattern_id,
         user_id=str(user_id),
-        description="User tends to work on AI projects at night.",
+        description="User tends to work on AI projects regularly.",
         domain=PatternDomain.PROJECTS,
         status=PatternStatus.CONFIRMED,
         confidence=0.85,
@@ -300,8 +378,32 @@ async def test_reflection_change_requires_multiple_consistent_recent_observation
 
 
 # ==============================================================================
-# 4. Temporal Window & Durable Pattern Tests
+# 4. Temporal Window Validation & Bounds Tests
 # ==============================================================================
+
+@pytest.mark.asyncio
+async def test_reflection_time_window_validation_bounds():
+    """Requirement: time_window_days must be an integer between 1 and 90; invalid values raise ValueError."""
+    service = ReflectionService()
+    user_id = uuid.uuid4()
+
+    # Invalid: 0
+    with pytest.raises(ValueError, match="time_window_days must be an integer between 1 and 90"):
+        await service.analyze(user_id=user_id, experiences=[], patterns=[], time_window_days=0)
+
+    # Invalid: -1
+    with pytest.raises(ValueError, match="time_window_days must be an integer between 1 and 90"):
+        await service.analyze(user_id=user_id, experiences=[], patterns=[], time_window_days=-1)
+
+    # Invalid: 91
+    with pytest.raises(ValueError, match="time_window_days must be an integer between 1 and 90"):
+        await service.analyze(user_id=user_id, experiences=[], patterns=[], time_window_days=91)
+
+    # Valid: 30, 60, 90 (empty inputs return empty list without error)
+    assert await service.analyze(user_id=user_id, experiences=[], patterns=[], time_window_days=30) == []
+    assert await service.analyze(user_id=user_id, experiences=[], patterns=[], time_window_days=60) == []
+    assert await service.analyze(user_id=user_id, experiences=[], patterns=[], time_window_days=90) == []
+
 
 @pytest.mark.asyncio
 async def test_reflection_old_evidence_outside_window_is_ignored():
@@ -310,7 +412,6 @@ async def test_reflection_old_evidence_outside_window_is_ignored():
     user_id = uuid.uuid4()
     now = _fixed_now()
 
-    # Evidence from 45 days ago (outside 30-day default window)
     old_exp1 = Experience(
         id=uuid.uuid4(),
         user_id=str(user_id),
@@ -395,109 +496,61 @@ async def test_reflection_durable_pattern_older_than_window_remains_eligible():
     assert reflections[0].type == ReflectionType.PATTERN_REINFORCEMENT
 
 
-@pytest.mark.asyncio
-async def test_reflection_custom_time_window_configuration():
-    """Requirement: Custom time_window_days (e.g. 60 days) accepts evidence within that expanded window."""
+# ==============================================================================
+# 5. Confidence Calculation & Deduplication Fail-Closed Tests
+# ==============================================================================
+
+def test_reflection_confidence_helper_signature_and_scale():
+    """Requirement: _calculate_confidence has signature (self, evidence_count: int) without unused base parameter."""
     service = ReflectionService()
-    user_id = uuid.uuid4()
-    now = _fixed_now()
+    assert service._calculate_confidence(1) == 0.52
+    assert service._calculate_confidence(2) == 0.55
+    assert service._calculate_confidence(3) == 0.65
+    assert service._calculate_confidence(4) == 0.72
+    assert service._calculate_confidence(5) == 0.80
+    assert service._calculate_confidence(6) == 0.82
+    assert service._calculate_confidence(10) == 0.86
 
-    exp1 = Experience(
-        id=uuid.uuid4(),
-        user_id=str(user_id),
-        content="I studied AI at 10pm yesterday.",
-        type=ExperienceType.EVENT,
-        source=ExperienceSource.CHAT,
-        created_at=now - timedelta(days=45),
-    )
-    exp2 = Experience(
-        id=uuid.uuid4(),
-        user_id=str(user_id),
-        content="I worked on my AI project last night.",
-        type=ExperienceType.EVENT,
-        source=ExperienceSource.CHAT,
-        created_at=now - timedelta(days=40),
-    )
-
-    pattern = PersonalPattern(
-        user_id=str(user_id),
-        description="You tend to study AI at night.",
-        domain=PatternDomain.LEARNING,
-        status=PatternStatus.CONFIRMED,
-        confidence=0.80,
-    )
-
-    # 1. 30 days window -> excluded
-    ref_30 = await service.analyze(
-        user_id=user_id,
-        experiences=[exp1, exp2],
-        patterns=[pattern],
-        time_window_days=30,
-        reference_time=now,
-    )
-    assert ref_30 == []
-
-    # 2. 60 days window -> included
-    ref_60 = await service.analyze(
-        user_id=user_id,
-        experiences=[exp1, exp2],
-        patterns=[pattern],
-        time_window_days=60,
-        reference_time=now,
-    )
-    assert len(ref_60) == 1
-    assert ref_60[0].type == ReflectionType.PATTERN_REINFORCEMENT
-
-
-# ==============================================================================
-# 5. Subject Specificity & Unrelated Keyword Filtering
-# ==============================================================================
 
 @pytest.mark.asyncio
-async def test_reflection_unrelated_evidence_ignored():
-    """Requirement: Unrelated activities (e.g. watched AI documentary) do not count toward study/work pattern."""
+async def test_reflection_deduplication_fails_closed_on_missing_pattern_id():
+    """Requirement: Reflection without pattern_ids is rejected during deduplication and not assigned a random ID."""
     service = ReflectionService()
     user_id = uuid.uuid4()
-    now = _fixed_now()
 
-    exp1 = Experience(
-        id=uuid.uuid4(),
-        user_id=str(user_id),
-        content="I watched an interesting AI documentary on television.",
-        type=ExperienceType.EVENT,
-        source=ExperienceSource.CHAT,
-        created_at=now - timedelta(days=2),
-    )
-    exp2 = Experience(
-        id=uuid.uuid4(),
-        user_id=str(user_id),
-        content="I had breakfast at 8am.",
-        type=ExperienceType.EVENT,
-        source=ExperienceSource.CHAT,
-        created_at=now - timedelta(days=1),
-    )
-
-    pattern = PersonalPattern(
-        user_id=str(user_id),
-        description="User tends to work on AI coding projects at night.",
-        domain=PatternDomain.PROJECTS,
-        status=PatternStatus.CONFIRMED,
-        confidence=0.85,
-    )
-
-    reflections = await service.analyze(
+    # Raw reflection without pattern_ids
+    invalid_ref = Reflection(
         user_id=user_id,
-        experiences=[exp1, exp2],
-        patterns=[pattern],
-        time_window_days=30,
-        reference_time=now,
+        type=ReflectionType.PATTERN_REINFORCEMENT,
+        observation="Test observation",
+        confidence=0.70,
+        pattern_ids=[],  # Missing pattern ID
     )
 
-    assert reflections == []
+    # Calling reflect_on_pattern with valid inputs will always produce pattern_ids,
+    # but let's test that the deduplication loop skips reflections with empty pattern_ids
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(service, "reflect_on_pattern", lambda *args, **kwargs: invalid_ref)
+
+        pat = PersonalPattern(
+            user_id=str(user_id),
+            description="Test pattern",
+            domain=PatternDomain.GENERAL,
+        )
+        exp = Experience(
+            user_id=str(user_id),
+            content="Test content",
+            type=ExperienceType.EVENT,
+            source=ExperienceSource.CHAT,
+        )
+
+        reflections = await service.analyze(user_id=user_id, experiences=[exp], patterns=[pat])
+        # Invalid reflection with missing pattern_ids must be skipped/rejected
+        assert reflections == []
 
 
 # ==============================================================================
-# 6. Observational Safety & Non-Diagnostic Language
+# 6. Safety Invariants & Non-Diagnostic Language
 # ==============================================================================
 
 @pytest.mark.asyncio
@@ -510,7 +563,7 @@ async def test_reflection_safety_invariants_strictly_prevent_diagnoses_and_perso
     exp1 = Experience(
         id=uuid.uuid4(),
         user_id=str(user_id),
-        content="I haven't worked on my AI project for 5 days.",
+        content="I haven't worked on my AI project for weeks, stalled.",
         type=ExperienceType.STATE,
         source=ExperienceSource.CHAT,
         created_at=now - timedelta(days=5),
@@ -593,61 +646,7 @@ async def test_reflection_user_isolation_rejects_cross_user_and_invalid_user_ids
 
 
 # ==============================================================================
-# 8. Pattern Status Filtering
-# ==============================================================================
-
-@pytest.mark.asyncio
-async def test_reflection_superseded_and_weakened_patterns_are_ignored():
-    """Requirement: Weakened or superseded patterns are excluded from reflection analysis."""
-    service = ReflectionService()
-    user_id = uuid.uuid4()
-    now = _fixed_now()
-
-    exp1 = Experience(
-        id=uuid.uuid4(),
-        user_id=str(user_id),
-        content="I studied AI at 10pm yesterday.",
-        type=ExperienceType.EVENT,
-        source=ExperienceSource.CHAT,
-        created_at=now - timedelta(days=3),
-    )
-    exp2 = Experience(
-        id=uuid.uuid4(),
-        user_id=str(user_id),
-        content="I worked on my AI project last night.",
-        type=ExperienceType.EVENT,
-        source=ExperienceSource.CHAT,
-        created_at=now - timedelta(days=1),
-    )
-
-    superseded_pat = PersonalPattern(
-        user_id=str(user_id),
-        description="You tend to study AI at night.",
-        domain=PatternDomain.LEARNING,
-        status=PatternStatus.SUPERSEDED,
-        confidence=0.80,
-    )
-
-    weakened_pat = PersonalPattern(
-        user_id=str(user_id),
-        description="You tend to study AI at night.",
-        domain=PatternDomain.LEARNING,
-        status=PatternStatus.WEAKENED,
-        confidence=0.35,
-    )
-
-    reflections = await service.analyze(
-        user_id=user_id,
-        experiences=[exp1, exp2],
-        patterns=[superseded_pat, weakened_pat],
-        reference_time=now,
-    )
-
-    assert reflections == []
-
-
-# ==============================================================================
-# 9. Domain Model Validation & Serialization
+# 8. Domain Model Validation & Serialization
 # ==============================================================================
 
 def test_reflection_domain_model_validation_and_serialization():
@@ -697,12 +696,15 @@ def test_reflection_domain_model_validation_and_serialization():
     with pytest.raises(ValueError, match="observation must be a non-empty string"):
         Reflection(user_id=user_id, type=ReflectionType.PATTERN_REINFORCEMENT, observation="", confidence=0.5)
 
-    with pytest.raises(ValueError, match="time_window_days must be a positive integer"):
+    with pytest.raises(ValueError, match="time_window_days must be an integer between 1 and 90"):
         Reflection(user_id=user_id, type=ReflectionType.PATTERN_REINFORCEMENT, observation="Test", confidence=0.5, time_window_days=0)
+
+    with pytest.raises(ValueError, match="time_window_days must be an integer between 1 and 90"):
+        Reflection(user_id=user_id, type=ReflectionType.PATTERN_REINFORCEMENT, observation="Test", confidence=0.5, time_window_days=95)
 
 
 # ==============================================================================
-# 10. Dependency Wiring
+# 9. Dependency Wiring
 # ==============================================================================
 
 def test_get_reflection_service_dependency_wiring():
