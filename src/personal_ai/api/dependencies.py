@@ -29,6 +29,7 @@ from personal_ai.infrastructure.embedding import (
     get_embedding_provider as create_embedding_provider,
 )
 from personal_ai.llm import LLMClient, get_llm_client
+from personal_ai.application.proactive import ProactiveIntelligenceService
 from personal_ai.services.chat_service import ChatService
 from personal_ai.tools import ToolRegistry, create_tool_registry
 
@@ -91,6 +92,11 @@ def get_personal_agent(
 ) -> PersonalAgent:
     """Dependency provider constructing PersonalAgent instance with LLMClient and ToolRegistry."""
     return PersonalAgent(llm_client=llm_client, tool_registry=tool_registry)
+
+
+def get_proactive_intelligence_service() -> ProactiveIntelligenceService:
+    """Dependency provider constructing ProactiveIntelligenceService instance for PR #22."""
+    return ProactiveIntelligenceService()
 
 
 async def get_chat_service(
