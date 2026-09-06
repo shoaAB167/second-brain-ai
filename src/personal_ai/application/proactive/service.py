@@ -32,12 +32,13 @@ class ProactiveIntelligenceService:
         1. ProactiveCandidate != Action: Produces passive proposal containers only.
            Does NOT execute tools, send notifications, modify memory, or make LLM calls.
         2. Preserves Uncertainty: Explicit emotion > extracted emotion > inferred possibility.
-           Never diagnoses conditions or turns temporary states into personality traits.
+           Never diagnoses conditions, makes causal claims, or turns temporary states into personality traits.
         3. Strict User Isolation: Every analysis is scoped exclusively to authenticated user_id.
         4. In-Memory Deduplication: Avoids duplicate candidates for identical evidence in a single pass.
+        5. Conservative Signal Generation: Prefers NO SIGNAL over FALSE POSITIVE when evidence is insufficient.
     """
 
-    # Emotional/Mental state keywords for repeated state detection
+    # Emotional/Mental state keywords for observational repeated state detection
     _STATE_KEYWORDS = {
         "tired": ["tired", "exhausted", "fatigued", "drained", "weary"],
         "low energy": ["low energy", "lethargic", "no energy", "sluggish", "depleted"],
@@ -49,17 +50,31 @@ class ProactiveIntelligenceService:
         "sad": ["sad", "down", "low mood", "feeling blue"],
     }
 
-    # Commitment indicator keywords
-    _COMMITMENT_INDICATORS = [
-        r"\b(committed to|promised to|agreed to|scheduled to)\b",
-        r"\b(will work on|plan to complete|deadline is|due on|due by|finish by)\b",
-        r"\b(every day|daily goal|every morning|every evening)\b",
+    # Explicit phrases indicating goal inactivity (goal age alone is never sufficient)
+    _EXPLICIT_INACTIVITY_PHRASES = [
+        "inactive",
+        "no progress",
+        "haven't touched",
+        "haven't worked on",
+        "have not worked on",
+        "on hold",
+        "paused",
+        "not worked on",
+        "no progress recently",
+        "stalled",
+        "zero progress",
+    ]
+
+    # Explicit commitment indicator phrases (generic plans like "I plan to" or "I will" are NOT commitments)
+    _EXPLICIT_COMMITMENT_INDICATORS = [
+        r"\b(committed to|promised to|agreed to|solemnly promised)\b",
+        r"\b(my commitment is|commitment to)\b",
     ]
 
     # Missed commitment evidence keywords
     _MISSED_INDICATORS = [
         r"\b(didn'?t|did not|couldn'?t|could not|failed to|missed|forgot to|haven'?t|have not)\b",
-        r"\b(fell behind|delayed|unable to finish|skipped|postponed)\b",
+        r"\b(fell behind|delayed|unable to finish|skipped|postponed|never completed)\b",
     ]
 
     def __init__(self) -> None:
@@ -174,22 +189,68 @@ class ProactiveIntelligenceService:
             "created_at": created,
         }
 
-    def _detect_goal_inactivity(
+    def _has_meaningful_goal_activity(
+        self,
+        goal_content: str,
+        goal_id: uuid.UUID,
+        records: List[Dict[str, Any]],
+        current_message: Optional[str],
+        now: datetime,
+    ) -> bool:
+        """Check whether there is strong, non-generic evidence of recent progress or activity toward a goal.
+
+        Conservative rule:
+        - Weak or single generic word overlap (e.g. 'AI') does NOT count as activity.
+        - Meaningful activity requires significant multi-word phrase matching or explicit activity records.
+        """
+        # Extract meaningful multi-word key phrases (length >= 4 chars, excluding stopwords)
+        stop_words = {
+            "want", "goal", "need", "like", "will", "make", "this", "that", "with", "from",
+            "have", "been", "about", "project", "work", "more", "some", "into", "their"
+        }
+        words = [w for w in re.findall(r"\b\w{4,}\b", goal_content.lower()) if w not in stop_words]
+
+        # 1. Check current user message
+        if current_message:
+            msg_lower = current_message.lower()
+            # If 2 or more distinct key terms match in the current message, or a 3+ word substring
+            matched_words = [w for w in words if w in msg_lower]
+            if len(matched_words) >= 2 or (len(words) == 1 and words[0] in msg_lower and len(words[0]) >= 6):
+                return True
+
+        # 2. Check recent experience records
+        for other in records:
+            if other["id"] == goal_id:
+                continue
+
+            other_type = other.get("type", "")
+            # Only action/progress experience types count toward activity
+            if other_type in ("EVENT", "PROJECT", "HABIT", "DECISION", "STATE"):
+                other_content = other["content"].lower()
+                matched_words = [w for w in words if w in other_content]
+                # Require strong topical overlap (at least 2 meaningful words)
+                if len(matched_words) >= 2:
+                    other_created = other.get("created_at")
+                    if other_created is None or (now - other_created) < timedelta(days=14):
+                        return True
+
+        return False
+
+    def _detect_goal_inactivity_signals(
         self,
         records: List[Dict[str, Any]],
         current_message: Optional[str],
         now: datetime,
-    ) -> List[ProactiveCandidate]:
-        """Detect potential goal inactivity while preserving uncertainty.
+    ) -> List[ProactiveSignal]:
+        """Detect potential goal inactivity signals based strictly on explicit inactivity evidence.
 
-        Rules:
-        - Must have an ACTIVE GOAL experience.
-        - Must have evidence of inactivity (e.g. aged > 14 days without activity, or explicit temporal inactivity notes).
-        - Must NOT produce a signal if the goal is active, newly created, or has recent related activity.
-        - Must NEVER infer lack of motivation, laziness, or emotional state.
+        Conservative Invariant:
+        - Goal age ALONE (e.g. age >= 14 days) is NEVER sufficient evidence of inactivity.
+        - Inactivity MUST require explicit inactivity language or explicit temporal indications of stalled progress.
+        - If recent progress or activity is observed, NO signal is generated.
+        - If evidence is insufficient, prefer NO SIGNAL.
         """
-        candidates: List[ProactiveCandidate] = []
-        msg_lower = (current_message or "").lower()
+        signals: List[ProactiveSignal] = []
 
         for rec in records:
             if rec["type"] != "GOAL" and rec.get("domain") != "goal":
@@ -200,152 +261,133 @@ class ProactiveIntelligenceService:
 
             goal_content = rec["content"]
             goal_id = rec["id"]
-            created_at = rec.get("created_at")
             temporal_ctx = (rec.get("temporal_context") or "").lower()
+            content_lower = goal_content.lower()
 
-            # Check if there is active evidence in current message or recent records
-            goal_keywords = [
-                w for w in re.findall(r"\w+", goal_content.lower())
-                if len(w) > 3 and w not in ("want", "goal", "need", "like", "will", "make", "this", "that")
-            ]
-
-            has_recent_activity = False
-            # 1. Check current message
-            if goal_keywords and any(kw in msg_lower for kw in goal_keywords):
-                has_recent_activity = True
-
-            # 2. Check other recent records for progress or activity
-            if not has_recent_activity:
-                for other in records:
-                    if other["id"] == goal_id:
-                        continue
-                    other_content = other["content"].lower()
-                    if goal_keywords and any(kw in other_content for kw in goal_keywords):
-                        other_created = other.get("created_at")
-                        if other_created and (now - other_created) < timedelta(days=7):
-                            has_recent_activity = True
-                            break
-
-            if has_recent_activity:
+            # 1. Check if goal is actively being pursued
+            if self._has_meaningful_goal_activity(goal_content, goal_id, records, current_message, now):
                 # Active goal: do not generate inactivity signal
                 continue
 
-            # Check for evidence of inactivity
-            has_inactivity_evidence = False
+            # 2. Inactivity requires EXPLICIT evidence of inactivity
+            has_explicit_inactivity = False
             confidence = 0.72
 
-            # Temporal context hints
-            inactivity_phrases = [
-                "inactive", "haven't touched", "no progress", "on hold",
-                "last month", "weeks ago", "paused", "not worked on"
-            ]
-            if any(phrase in temporal_ctx for phrase in inactivity_phrases):
-                has_inactivity_evidence = True
-                confidence = 0.78
-            elif created_at is not None:
-                age = now - created_at
-                if age >= timedelta(days=14):
-                    has_inactivity_evidence = True
-                    confidence = 0.72 if age < timedelta(days=30) else 0.82
+            combined_text = f"{content_lower} {temporal_ctx}"
+            for phrase in self._EXPLICIT_INACTIVITY_PHRASES:
+                if phrase in combined_text:
+                    has_explicit_inactivity = True
+                    confidence = 0.78
+                    break
 
-            if has_inactivity_evidence:
-                candidates.append(
-                    ProactiveCandidate(
-                        signal_type=ProactiveSignalType.GOAL_INACTIVITY,
-                        reason="The goal appears inactive based on recent available context.",
+            if has_explicit_inactivity:
+                signals.append(
+                    ProactiveSignal(
+                        type=ProactiveSignalType.GOAL_INACTIVITY,
+                        reason="The goal appears inactive based on available context.",
                         confidence=confidence,
-                        priority=ProactivePriority.LOW,
-                        suggested_action="Ask whether the user wants to revisit or work on this goal.",
                         related_experience_ids=[goal_id],
                     )
                 )
 
-        return candidates
+        return signals
 
-    def _detect_commitment_missed(
+    def _detect_commitment_missed_signals(
         self,
         records: List[Dict[str, Any]],
         current_message: Optional[str],
         now: datetime,
-    ) -> List[ProactiveCandidate]:
-        """Detect missed commitments conservatively based on temporal evidence.
+    ) -> List[ProactiveSignal]:
+        """Detect missed commitment signals conservatively based on explicit commitment and temporal evidence.
 
-        Rules:
-        - Must have clear evidence of a commitment (not just a vague intention).
-        - Must have temporal evidence that the commitment window passed without expected action.
-        - If insufficient evidence, return NO signal.
+        Conservative Invariant:
+        - A generic PLAN (e.g. 'I plan to study AI') is NOT a commitment.
+        - A vague future intention is NOT a commitment.
+        - Must have:
+          1. Strong commitment evidence (ExperienceType.COMMITMENT or explicit commitment phrasing).
+          2. Temporal evidence that the deadline/timeframe is in the past.
+          3. Evidence that the expected action was missed.
+        - If temporal evidence is ambiguous or future: NO SIGNAL.
         """
-        candidates: List[ProactiveCandidate] = []
+        signals: List[ProactiveSignal] = []
         msg_lower = (current_message or "").lower()
 
         for rec in records:
             content_lower = rec["content"].lower()
             temporal_ctx = (rec.get("temporal_context") or "").lower()
+            rec_type = rec.get("type", "")
 
-            # Check if this item represents a commitment
-            is_commitment = any(re.search(pat, content_lower) for pat in self._COMMITMENT_INDICATORS)
-            if not is_commitment:
+            # 1. Require strong commitment evidence
+            is_explicit_type = (rec_type == "COMMITMENT")
+            has_commitment_phrasing = any(re.search(pat, content_lower) for pat in self._EXPLICIT_COMMITMENT_INDICATORS)
+
+            if not (is_explicit_type or has_commitment_phrasing):
+                # Generic plan, intention, or goal without explicit commitment -> NO SIGNAL
                 continue
 
             commitment_id = rec["id"]
 
-            # Check for evidence that the commitment was missed
-            has_missed_evidence = False
-            confidence = 0.75
+            # 2. Require evidence that the deadline/timeframe has passed
+            is_past_deadline = False
+            past_indicators = ["yesterday", "last week", "last night", "passed deadline", "overdue", "missed date"]
+            if any(p in temporal_ctx for p in past_indicators) or any(p in content_lower for p in past_indicators):
+                is_past_deadline = True
 
-            # 1. Missed indicators in content or temporal context
+            # If the temporal context indicates a future date/time without past indicators -> NOT missed
+            future_indicators = ["tomorrow", "next week", "next month", "tonight", "in the future", "upcoming"]
+            if any(f in temporal_ctx for f in future_indicators):
+                is_past_deadline = False
+
+            # 3. Require evidence that the expected action did not happen
+            has_missed_evidence = False
             if any(re.search(pat, content_lower) for pat in self._MISSED_INDICATORS) or any(
                 re.search(pat, temporal_ctx) for pat in self._MISSED_INDICATORS
             ):
                 has_missed_evidence = True
-                confidence = 0.80
-
-            # 2. Missed indicators in current user message regarding this commitment
-            elif any(re.search(pat, msg_lower) for pat in self._MISSED_INDICATORS):
+            elif msg_lower and any(re.search(pat, msg_lower) for pat in self._MISSED_INDICATORS):
                 # Ensure current message refers to this commitment topic
-                keywords = [w for w in re.findall(r"\w+", content_lower) if len(w) > 3]
+                keywords = [w for w in re.findall(r"\b\w{4,}\b", content_lower)]
                 if any(kw in msg_lower for kw in keywords):
                     has_missed_evidence = True
-                    confidence = 0.82
 
-            # 3. Explicit past deadline in temporal context
-            elif any(p in temporal_ctx for p in ["yesterday", "last week", "passed deadline", "overdue", "missed date"]):
-                has_missed_evidence = True
-                confidence = 0.75
-
-            if has_missed_evidence:
-                candidates.append(
-                    ProactiveCandidate(
-                        signal_type=ProactiveSignalType.COMMITMENT_MISSED,
-                        reason="Evidence indicates a planned commitment may have been missed based on available temporal context.",
-                        confidence=confidence,
-                        priority=ProactivePriority.MEDIUM,
-                        suggested_action="Ask whether the user wants to reschedule, adjust, or check in on this commitment.",
+            # All 3 conditions must be met: commitment + past deadline + missed evidence
+            if (is_past_deadline or has_missed_evidence) and has_missed_evidence:
+                signals.append(
+                    ProactiveSignal(
+                        type=ProactiveSignalType.COMMITMENT_MISSED,
+                        reason="Evidence indicates a planned commitment may have been missed.",
+                        confidence=0.78,
                         related_experience_ids=[commitment_id],
                     )
                 )
 
-        return candidates
+        return signals
 
-    def _detect_repeated_state(
+    def _detect_repeated_state_signals(
         self,
         records: List[Dict[str, Any]],
-    ) -> List[ProactiveCandidate]:
-        """Detect repeated states across distinct experiences while preserving uncertainty.
+        now: datetime,
+    ) -> List[ProactiveSignal]:
+        """Detect repeated state signals across distinct experiences with strictly observational semantics.
 
-        Rules:
-        - Single temporary state -> NO signal.
-        - Repeated evidence (count >= 2) -> REPEATED_STATE signal.
-        - NEVER diagnose medical/psychological conditions.
-        - NEVER turn temporary emotions into permanent personality traits.
+        Conservative Invariant:
+        - Single state occurrence -> NO SIGNAL.
+        - Repeated occurrences (count >= 2) within recent observations -> REPEATED_STATE signal.
+        - Reason is strictly observational: "A similar state was recorded more than once recently."
+        - Strictly NO medical diagnosis, NO causal claims, NO personality trait inference.
         """
-        candidates: List[ProactiveCandidate] = []
+        signals: List[ProactiveSignal] = []
         state_clusters: Dict[str, List[uuid.UUID]] = {}
 
         for rec in records:
             content_lower = rec["content"].lower()
             emotion = (rec.get("emotion") or "").lower()
             rec_id = rec["id"]
+            rec_created = rec.get("created_at")
+
+            # Check if record is within recent window (e.g. 30 days) if created_at is present
+            if rec_created and (now - rec_created) > timedelta(days=30):
+                continue
 
             detected_cluster = None
 
@@ -356,7 +398,7 @@ class ProactiveIntelligenceService:
                         detected_cluster = cluster_name
                         break
 
-            # 2. Check content for state patterns if type is STATE or EMOTION_STATE or not matched yet
+            # 2. Check content for state patterns if type is STATE or EMOTION_STATE or emotion is present
             if not detected_cluster and (rec["type"] in ("STATE", "EMOTION_STATE", "") or emotion):
                 for cluster_name, keywords in self._STATE_KEYWORDS.items():
                     if any(re.search(r"\b" + re.escape(kw) + r"\b", content_lower) for kw in keywords):
@@ -369,21 +411,97 @@ class ProactiveIntelligenceService:
                 if rec_id not in state_clusters[detected_cluster]:
                     state_clusters[detected_cluster].append(rec_id)
 
-        # Evaluate repetition (count >= 2)
+        # Evaluate repetition (count >= 2 distinct experiences)
         for cluster_name, exp_ids in state_clusters.items():
             if len(exp_ids) >= 2:
                 count = len(exp_ids)
-                confidence = round(min(0.70 + (count - 2) * 0.08, 0.90), 2)
-                candidates.append(
-                    ProactiveCandidate(
-                        signal_type=ProactiveSignalType.REPEATED_STATE,
-                        reason=f"A similar state ('{cluster_name}') has appeared repeatedly in recent experiences.",
+                confidence = round(min(0.70 + (count - 2) * 0.08, 0.86), 2)
+                signals.append(
+                    ProactiveSignal(
+                        type=ProactiveSignalType.REPEATED_STATE,
+                        reason=f"A similar state ('{cluster_name}') was recorded more than once recently.",
                         confidence=confidence,
-                        priority=ProactivePriority.MEDIUM,
-                        suggested_action="Ask how the user is feeling and whether they want help understanding the pattern.",
                         related_experience_ids=exp_ids,
                     )
                 )
+
+        return signals
+
+    def detect_signals(
+        self,
+        records: List[Dict[str, Any]],
+        current_message: Optional[str] = None,
+        now: Optional[datetime] = None,
+    ) -> List[ProactiveSignal]:
+        """Detect observation signals using the intermediate ProactiveSignal layer.
+
+        Args:
+            records: List of normalized, user-isolated observation records.
+            current_message: Optional current user message.
+            now: Current reference UTC datetime.
+
+        Returns:
+            List[ProactiveSignal]: Detected observation signals.
+        """
+        ref_time = now or _utc_now()
+        if ref_time.tzinfo is None:
+            ref_time = ref_time.replace(tzinfo=timezone.utc)
+
+        signals: List[ProactiveSignal] = []
+
+        # 1. Goal Inactivity Signals
+        signals.extend(self._detect_goal_inactivity_signals(records, current_message, ref_time))
+
+        # 2. Missed Commitment Signals
+        signals.extend(self._detect_commitment_missed_signals(records, current_message, ref_time))
+
+        # 3. Repeated State Signals
+        signals.extend(self._detect_repeated_state_signals(records, ref_time))
+
+        return signals
+
+    def generate_candidates(self, signals: List[ProactiveSignal]) -> List[ProactiveCandidate]:
+        """Convert detected ProactiveSignal objects into proposed ProactiveCandidate interventions.
+
+        Args:
+            signals: List of detected ProactiveSignal objects.
+
+        Returns:
+            List[ProactiveCandidate]: Formatted candidate proposals.
+        """
+        candidates: List[ProactiveCandidate] = []
+
+        action_mapping = {
+            ProactiveSignalType.GOAL_INACTIVITY: (
+                ProactivePriority.LOW,
+                "Ask whether the user wants to revisit or work on this goal.",
+            ),
+            ProactiveSignalType.COMMITMENT_MISSED: (
+                ProactivePriority.MEDIUM,
+                "Ask whether the user wants to reschedule, adjust, or check in on this commitment.",
+            ),
+            ProactiveSignalType.REPEATED_STATE: (
+                ProactivePriority.MEDIUM,
+                "Ask how the user is feeling and whether they want help understanding the pattern.",
+            ),
+        }
+
+        for signal in signals:
+            priority, action = action_mapping.get(
+                signal.type,
+                (ProactivePriority.LOW, "Check in with the user regarding recent observations."),
+            )
+
+            candidates.append(
+                ProactiveCandidate(
+                    signal_type=signal.type,
+                    reason=signal.reason,
+                    confidence=signal.confidence,
+                    priority=priority,
+                    suggested_action=action,
+                    related_experience_ids=signal.related_experience_ids,
+                )
+            )
 
         return candidates
 
@@ -414,6 +532,9 @@ class ProactiveIntelligenceService:
         reference_time: Optional[datetime] = None,
     ) -> List[ProactiveCandidate]:
         """Analyze user-isolated observations and detect meaningful proactive intervention candidates.
+
+        Pipeline:
+            Observations -> detect_signals() -> generate_candidates() -> deduplicate -> List[ProactiveCandidate]
 
         Args:
             user_id: Authenticated user UUID for strict isolation.
@@ -451,34 +572,23 @@ class ProactiveIntelligenceService:
             len(records),
         )
 
-        candidates: List[ProactiveCandidate] = []
-
-        # 2. Detect Goal Inactivity
-        goal_candidates = self._detect_goal_inactivity(
+        # 2. Intermediate layer: detect signals
+        signals = self.detect_signals(
             records=records,
             current_message=current_message,
             now=now,
         )
-        candidates.extend(goal_candidates)
 
-        # 3. Detect Missed Commitments
-        commitment_candidates = self._detect_commitment_missed(
-            records=records,
-            current_message=current_message,
-            now=now,
-        )
-        candidates.extend(commitment_candidates)
+        # 3. Intermediate layer: generate candidates from signals
+        candidates = self.generate_candidates(signals)
 
-        # 4. Detect Repeated State
-        state_candidates = self._detect_repeated_state(records=records)
-        candidates.extend(state_candidates)
-
-        # 5. In-memory per-analysis deduplication
+        # 4. In-memory per-analysis deduplication
         deduped = self._deduplicate_candidates(candidates)
 
         logger.info(
-            "Proactive intelligence analysis complete [user_id=%s, candidates_count=%d]",
+            "Proactive intelligence analysis complete [user_id=%s, signals_count=%d, candidates_count=%d]",
             user_id,
+            len(signals),
             len(deduped),
         )
 

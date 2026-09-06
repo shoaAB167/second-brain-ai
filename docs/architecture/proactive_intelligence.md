@@ -8,10 +8,11 @@ This capability moves the system from a purely reactive request-response paradig
 
 ```mermaid
 graph LR
-    A["Life Observations<br>(Experiences, PersonalContext)"] --> B["Signal Detection<br>(ProactiveIntelligenceService)"]
-    B --> C["Hypothesis & Candidate Generation"]
-    C --> D["ProactiveCandidate<br>(Passive Proposal Container)"]
-    D -.-> E["Future Intervention Layer<br>(PR #23+: Notification / Agent / Tool Action)"]
+    A["Life Observations<br>(Experiences, PersonalContext)"] --> B["detect_signals()<br>(ProactiveIntelligenceService)"]
+    B --> C["ProactiveSignal<br>(Intermediate Representation)"]
+    C --> D["generate_candidates()<br>(Candidate Generation)"]
+    D --> E["ProactiveCandidate<br>(Passive Proposal Container)"]
+    E -.-> F["Future Intervention Layer<br>(PR #23+: Notification / Agent / Tool Action)"]
 ```
 
 > [!IMPORTANT]
@@ -29,10 +30,11 @@ $$\text{Observation} \longrightarrow \text{Signal} \longrightarrow \text{Hypothe
 $$\mathbf{NOT:} \quad \text{Observation} \longrightarrow \text{Assumption} \longrightarrow \text{Fact}$$
 
 ### Emotional Intelligence & Safety Rules:
-1. **Uncertainty Ordering**: $\text{Explicit emotion} > \text{Extracted emotion} > \text{Inferred possibility}$.
-2. **No Medical/Clinical Diagnosis**: The system will never state or infer diagnoses (e.g. *"You have depression"*, *"You have chronic anxiety"*).
-3. **No Personality Trait Assumptions**: A temporary emotional state (e.g. *"I felt anxious today"*) remains a temporary state and is never converted into a permanent personality trait (*"User is an anxious person"*).
-4. **Conservative Signal Detection**: If temporal or contextual evidence is ambiguous or incomplete, the system yields **no signal** rather than manufacturing false assumptions.
+1. **Conservative Preference**: $\text{NO SIGNAL} > \text{FALSE POSITIVE}$ when evidence is insufficient or ambiguous.
+2. **Uncertainty Ordering**: $\text{Explicit emotion} > \text{Extracted emotion} > \text{Inferred possibility}$.
+3. **No Medical/Clinical Diagnosis**: The system will never state or infer diagnoses (e.g. *"You have depression"*, *"You have chronic anxiety"*).
+4. **No Personality Trait Assumptions**: A temporary emotional state (e.g. *"I felt anxious today"*) remains a temporary state and is never converted into a permanent personality trait (*"User is an anxious person"*).
+5. **No Causal Inferences**: Repeated temporary states are presented purely as observational occurrences (*"A similar state was recorded more than once recently"*).
 
 ---
 
@@ -40,9 +42,9 @@ $$\mathbf{NOT:} \quad \text{Observation} \longrightarrow \text{Assumption} \long
 
 | Signal Type | Description | Default Priority | Confidence Range |
 | :--- | :--- | :--- | :--- |
-| `GOAL_INACTIVITY` | An active goal has no observed progress or activity over a prolonged timeframe (>14 days) or explicit inactivity notes. | `LOW` | `0.70 - 0.85` |
-| `COMMITMENT_MISSED` | Evidence indicates a specific commitment/deadline has passed without completion or expected action. | `MEDIUM` | `0.75 - 0.85` |
-| `REPEATED_STATE` | A similar mental/emotional state (e.g. `tired`, `overwhelmed`, `low energy`) has occurred repeatedly ($\ge 2$ distinct experiences). | `MEDIUM` | `0.70 - 0.90` |
+| `GOAL_INACTIVITY` | An active goal has explicit evidence of stalled progress, pause, or inactivity (age alone is never sufficient). | `LOW` | `0.70 - 0.85` |
+| `COMMITMENT_MISSED` | Evidence indicates an explicit commitment has a passed deadline without completion or expected action (generic plans are not commitments). | `MEDIUM` | `0.75 - 0.85` |
+| `REPEATED_STATE` | A similar mental/emotional state (e.g. `tired`, `overwhelmed`, `low energy`) has occurred repeatedly ($\ge 2$ distinct recent experiences). | `MEDIUM` | `0.70 - 0.86` |
 
 ---
 
@@ -56,9 +58,9 @@ $$\mathbf{NOT:} \quad \text{Observation} \longrightarrow \text{Assumption} \long
 
 ### Application Layer (`personal_ai.application.proactive`)
 - **`ProactiveIntelligenceService`**:
-  - Deterministic and fast in-memory execution (no LLM, no external I/O).
+  - Deterministic, model-agnostic, in-memory execution (no LLM, no external I/O).
+  - Explicit multi-stage pipeline: `detect_signals()` $\rightarrow$ `List[ProactiveSignal]` $\rightarrow$ `generate_candidates()` $\rightarrow$ `List[ProactiveCandidate]` $\rightarrow$ Deduplication.
   - Strictly user-scoped via authenticated `user_id`.
-  - Performs per-analysis deduplication to avoid redundant candidates for the same evidence.
 
 ---
 
