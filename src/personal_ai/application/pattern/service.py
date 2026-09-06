@@ -287,6 +287,30 @@ class PersonalPatternService:
 
         return candidate_patterns
 
+    def _matches_pattern(self, pattern: PersonalPattern, experience: Experience) -> bool:
+        """Check if an experience contains evidence relevant to the pattern theme/domain."""
+        theme = next(
+            (t for t in self._PATTERN_THEMES if t["domain"] == pattern.domain and t["description"] == pattern.description),
+            None,
+        )
+        if not theme:
+            theme = next(
+                (t for t in self._PATTERN_THEMES if t["domain"] == pattern.domain),
+                None,
+            )
+        if not theme:
+            return False
+
+        exp_content = experience.content.lower()
+        exp_temporal = (experience.temporal_context or "").lower()
+        exp_emotion = (experience.emotional_context.emotion if experience.emotional_context else "") or ""
+        combined_text = f"{exp_content} {exp_temporal} {exp_emotion}".lower()
+
+        for pattern_regex in theme["keywords"]:
+            if re.search(pattern_regex, combined_text):
+                return True
+        return False
+
     async def detect_patterns(
         self,
         user_id: uuid.UUID,
@@ -306,7 +330,12 @@ class PersonalPatternService:
         experiences: List[Experience],
         reference_time: Optional[datetime] = None,
     ) -> List[PersonalPattern]:
-        """Detect patterns and evolve or persist them into the configured repository.
+        """Detect patterns and evolve or persist them into the configured repository idempotently.
+
+        Guarantees:
+        - Reprocessing the exact same experience set does not change evidence_ids, timestamps, or confidence.
+        - New evidence is added exactly once.
+        - Existing historical evidence is preserved.
 
         Args:
             user_id: Authenticated user UUID.
@@ -336,17 +365,23 @@ class PersonalPatternService:
             )
 
             if matching_existing:
-                # Evolve existing pattern with all new evidence
+                # Evolve existing pattern strictly if new distinct evidence exists
+                added_any = False
                 for eid in candidate.evidence_ids:
                     if eid not in matching_existing.evidence_ids:
                         matching_existing.add_evidence(eid, observed_at=candidate.last_observed_at)
+                        added_any = True
 
-                matching_existing.update_confidence(self.calculate_confidence(len(matching_existing.evidence_ids)))
-                if len(matching_existing.evidence_ids) >= 5 and matching_existing.confidence >= 0.80:
-                    matching_existing.status = PatternStatus.CONFIRMED
+                if added_any:
+                    matching_existing.update_confidence(self.calculate_confidence(len(matching_existing.evidence_ids)))
+                    if len(matching_existing.evidence_ids) >= 5 and matching_existing.confidence >= 0.80:
+                        matching_existing.status = PatternStatus.CONFIRMED
 
-                updated = await self._pattern_repo.update(matching_existing)
-                result.append(updated)
+                    updated = await self._pattern_repo.update(matching_existing)
+                    result.append(updated)
+                else:
+                    # Idempotent: exact same evidence set produces identical unmodified pattern record
+                    result.append(matching_existing)
             else:
                 created = await self._pattern_repo.create(candidate)
                 result.append(created)
@@ -359,7 +394,12 @@ class PersonalPatternService:
         new_experience: Experience,
         is_supporting: bool = True,
     ) -> PersonalPattern:
-        """Evolve an existing pattern hypothesis with new incoming evidence.
+        """Evolve an existing pattern hypothesis with validated incoming evidence.
+
+        Guarantees:
+        - Strict user isolation: experience user_id must match pattern user_id.
+        - Evidence validation: arbitrary unrelated experiences cannot be attached as supporting evidence.
+        - Idempotency: duplicate experience IDs are not attached multiple times.
 
         Args:
             pattern: The existing PersonalPattern domain entity.
@@ -380,6 +420,19 @@ class PersonalPatternService:
             return pattern
 
         if is_supporting:
+            # Validate that the experience actually matches the pattern theme
+            if not self._matches_pattern(pattern=pattern, experience=new_experience):
+                logger.info(
+                    "Experience %s does not match pattern %s theme; rejecting as supporting evidence.",
+                    new_experience.id,
+                    pattern.id,
+                )
+                return pattern
+
+            # Idempotency check: if already attached, do nothing
+            if new_experience.id in pattern.evidence_ids:
+                return pattern
+
             exp_time = (
                 new_experience.created_at.replace(tzinfo=timezone.utc)
                 if new_experience.created_at.tzinfo is None

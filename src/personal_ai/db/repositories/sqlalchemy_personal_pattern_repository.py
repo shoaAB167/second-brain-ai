@@ -159,8 +159,10 @@ class SQLAlchemyPersonalPatternRepository(PersonalPatternRepository):
         """Convert ORM model to domain entity."""
         try:
             status_enum = PatternStatus(model.status)
-        except ValueError:
-            status_enum = PatternStatus.HYPOTHESIS
+        except (ValueError, TypeError):
+            raise ValueError(
+                f"Invalid or corrupted PatternStatus '{model.status}' for pattern ID {model.id}."
+            )
 
         evidence_list: List[uuid.UUID] = []
         if isinstance(model.evidence_ids, list):

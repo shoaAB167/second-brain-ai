@@ -143,7 +143,10 @@ class PersonalPattern:
 
 ---
 
-## 7. Integration & Next Steps
+## 7. Nature of PR #23 & Next Steps
+
+> [!NOTE]
+> **Conservative Foundation**: The current deterministic keyword and thematic engine is intentionally scoped as a **first conservative pattern hypothesis engine**, not a general intelligence or psychological profiling system. It provides an auditable, evidence-backed foundation that strictly prevents ungrounded assumptions.
 
 - In PR #23, pattern detection and persistence are decoupled and available via `PersonalPatternService` and `PersonalPatternRepository`.
 - Patterns are **NOT** automatically injected into prompt context in this PR.

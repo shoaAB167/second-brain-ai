@@ -877,3 +877,244 @@ async def test_entity_serialization_and_repository_crud():
     assert fetched is not None
     assert new_evidence_id in fetched.evidence_ids
     assert len(fetched.evidence_ids) == 3
+
+
+# ==============================================================================
+# 20. Idempotency and Non-Inflation Tests for detect_and_persist()
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_detect_and_persist_is_idempotent_when_called_twice():
+    """Requirement: Reprocessing the exact same experience set does not change evidence_ids or confidence."""
+    repo = InMemoryPersonalPatternRepository()
+    service = PersonalPatternService(pattern_repo=repo)
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I procrastinated on my AI project.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Haven't worked on my project for 4 days.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    # First run
+    first_run = await service.detect_and_persist(
+        user_id=user_id,
+        experiences=[exp1, exp2],
+        reference_time=now,
+    )
+    assert len(first_run) == 1
+    p1 = first_run[0]
+    p1_id = p1.id
+    p1_evidence = list(p1.evidence_ids)
+    p1_conf = p1.confidence
+
+    # Second run with identical experiences
+    second_run = await service.detect_and_persist(
+        user_id=user_id,
+        experiences=[exp1, exp2],
+        reference_time=now,
+    )
+    assert len(second_run) == 1
+    p2 = second_run[0]
+
+    # Must be completely identical and idempotent
+    assert p2.id == p1_id
+    assert p2.evidence_ids == p1_evidence
+    assert p2.confidence == p1_conf
+    assert len(await repo.get_active_patterns(user_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_detect_and_persist_new_evidence_added_exactly_once():
+    """Requirement: New evidence is added exactly once and confidence does not inflate on re-runs."""
+    repo = InMemoryPersonalPatternRepository()
+    service = PersonalPatternService(pattern_repo=repo)
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    exp1 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I procrastinated on my AI project.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=3),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    exp2 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Haven't worked on my project for 4 days.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=2),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+    exp3 = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Delayed my AI study again today.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now - timedelta(days=1),
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    # Initial 2 experiences -> 2 evidence, 0.55 confidence
+    await service.detect_and_persist(user_id, [exp1, exp2], reference_time=now)
+
+    # Add 3rd experience -> 3 evidence, 0.65 confidence
+    updated = await service.detect_and_persist(user_id, [exp1, exp2, exp3], reference_time=now)
+    assert len(updated[0].evidence_ids) == 3
+    assert updated[0].confidence == pytest.approx(0.65, abs=0.01)
+
+    # Repeatedly process 5 more times with the exact same 3 experiences
+    for _ in range(5):
+        re_run = await service.detect_and_persist(user_id, [exp1, exp2, exp3], reference_time=now)
+        assert len(re_run[0].evidence_ids) == 3
+        assert re_run[0].confidence == pytest.approx(0.65, abs=0.01)
+
+
+# ==============================================================================
+# 21. Evidence Validation in evaluate_evidence()
+# ==============================================================================
+
+def test_evaluate_evidence_rejects_unrelated_arbitrary_experience():
+    """Requirement: Unrelated experience cannot be blindly attached as supporting evidence."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    pattern = PersonalPattern(
+        user_id=user_id,
+        description="Project activity appears to become inconsistent after periods of initial activity.",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=5),
+        last_observed_at=now - timedelta(days=2),
+    )
+    initial_evidence = list(pattern.evidence_ids)
+    initial_conf = pattern.confidence
+
+    # Completely unrelated experience (groceries)
+    unrelated_exp = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="I went to the supermarket and bought milk and eggs today.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now,
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    result = service.evaluate_evidence(
+        pattern=pattern,
+        new_experience=unrelated_exp,
+        is_supporting=True,
+    )
+
+    # Must NOT attach unrelated experience
+    assert result.evidence_ids == initial_evidence
+    assert result.confidence == initial_conf
+    assert unrelated_exp.id not in result.evidence_ids
+
+
+def test_evaluate_evidence_accepts_matching_supporting_experience():
+    """Requirement: Matching experience is attached and evolves pattern confidence."""
+    service = PersonalPatternService()
+    user_id = uuid.uuid4()
+    now = _fixed_now()
+
+    pattern = PersonalPattern(
+        user_id=user_id,
+        description="Project activity appears to become inconsistent after periods of initial activity.",
+        domain=PatternDomain.PROJECTS.value,
+        evidence_ids=[uuid.uuid4(), uuid.uuid4()],
+        confidence=0.55,
+        status=PatternStatus.HYPOTHESIS,
+        first_observed_at=now - timedelta(days=5),
+        last_observed_at=now - timedelta(days=2),
+    )
+
+    matching_exp = Experience(
+        id=uuid.uuid4(),
+        user_id=str(user_id),
+        content="Struggling to continue and delayed working on my second brain project.",
+        type=ExperienceType.EVENT,
+        source=ExperienceSource.CHAT,
+        created_at=now,
+        lifecycle_status=ExperienceLifecycleStatus.ACTIVE,
+    )
+
+    result = service.evaluate_evidence(
+        pattern=pattern,
+        new_experience=matching_exp,
+        is_supporting=True,
+    )
+
+    assert matching_exp.id in result.evidence_ids
+    assert len(result.evidence_ids) == 3
+    assert result.confidence == pytest.approx(0.65, abs=0.01)
+
+
+# ==============================================================================
+# 22. Fail-Closed Deserialization Tests
+# ==============================================================================
+
+def test_repository_model_to_domain_fails_closed_on_corrupted_status():
+    """Requirement: Corrupted or unknown PatternStatus in DB model raises ValueError (fails closed)."""
+    from personal_ai.db.models import PersonalPatternModel
+    from personal_ai.db.repositories.sqlalchemy_personal_pattern_repository import (
+        SQLAlchemyPersonalPatternRepository,
+    )
+
+    corrupted_model = PersonalPatternModel(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        description="Some pattern description",
+        domain="PROJECTS",
+        evidence_ids=[str(uuid.uuid4())],
+        confidence=0.6,
+        status="CORRUPTED_OR_UNKNOWN_STATUS",
+        first_observed_at=_fixed_now(),
+        last_observed_at=_fixed_now(),
+        created_at=_fixed_now(),
+        updated_at=_fixed_now(),
+    )
+
+    with pytest.raises(ValueError, match="Invalid or corrupted PatternStatus"):
+        SQLAlchemyPersonalPatternRepository._model_to_domain(corrupted_model)
+
+
+def test_domain_entity_from_dict_fails_closed_on_corrupted_status():
+    """Requirement: PersonalPattern.from_dict raises ValueError on invalid status."""
+    corrupted_dict = {
+        "id": str(uuid.uuid4()),
+        "user_id": str(uuid.uuid4()),
+        "description": "Some pattern description",
+        "domain": "PROJECTS",
+        "evidence_ids": [str(uuid.uuid4())],
+        "confidence": 0.6,
+        "status": "INVALID_STATUS_STRING",
+        "first_observed_at": _fixed_now().isoformat(),
+        "last_observed_at": _fixed_now().isoformat(),
+    }
+
+    with pytest.raises(ValueError):
+        PersonalPattern.from_dict(corrupted_dict)
