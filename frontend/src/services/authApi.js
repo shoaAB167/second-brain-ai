@@ -1,6 +1,8 @@
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
+let refreshPromise = null;
+
 /**
  * Register a new user with email and password.
  * @param {Object} credentials - { email, password }
@@ -81,4 +83,48 @@ export async function loginUser({ email, password }) {
   }
 
   return await response.json();
+}
+
+/**
+ * Refresh current access token using deduplicated in-flight request.
+ * @param {string} [token] - Optional token to refresh, defaults to localStorage token.
+ * @returns {Promise<string>} New access token string.
+ */
+export async function refreshToken(token = null) {
+  const currentToken = token || localStorage.getItem("sb_auth_token");
+  if (!currentToken) {
+    throw new Error("No active token to refresh.");
+  }
+
+  // Deduplicate concurrent refresh calls
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${currentToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to refresh session token.");
+      }
+
+      const data = await response.json();
+      const newToken = data.access_token;
+      if (newToken) {
+        localStorage.setItem("sb_auth_token", newToken);
+      }
+      return newToken;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 }

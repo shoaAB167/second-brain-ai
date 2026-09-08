@@ -340,3 +340,84 @@ async def test_chat_service_streaming_mid_stream_chunk_timeout_emits_error_and_d
     assert len(messages) == 1
     assert messages[0].role == MessageRole.USER
     assert messages[0].content == "Timeout prompt"
+
+
+@pytest.mark.asyncio
+async def test_chat_service_streaming_emits_safe_context_event_before_tokens(
+    db_session: AsyncSession,
+) -> None:
+    """Verify chat stream yields a safe context SSE event before token stream when personal context is retrieved."""
+    import json
+    from personal_ai.domain.experience import PersonalContext, PersonalContextItem
+
+    repo: ConversationRepository = SQLAlchemyConversationRepository(session=db_session)
+    user_id = uuid.uuid4()
+    conversation = await repo.create_conversation(user_id=user_id)
+
+    async def mock_stream_chunks(*args, **kwargs):
+        yield LLMStreamChunk(content="Based on your goal, ")
+        yield LLMStreamChunk(content="here is your plan.")
+
+    mock_llm_client = MagicMock(spec=LLMClient)
+    mock_llm_client.stream_response = MagicMock(side_effect=mock_stream_chunks)
+
+    mock_personal_context_service = MagicMock()
+    mock_personal_context_service.retrieve_context = AsyncMock(
+        return_value=PersonalContext(
+            user_id=user_id,
+            query="my goal",
+            items=[
+                PersonalContextItem(
+                    experience_id=uuid.uuid4(),
+                    content="I want to study AI daily",
+                    type="observation",
+                    domain="study",
+                    score=0.92,
+                    similarity=0.92,
+                ),
+                PersonalContextItem(
+                    experience_id=uuid.uuid4(),
+                    content="I work on Python projects",
+                    type="observation",
+                    domain="work",
+                    score=0.88,
+                    similarity=0.88,
+                ),
+            ],
+            total_candidates=2,
+        )
+    )
+
+    service = ChatService(
+        llm_client=mock_llm_client,
+        conversation_repo=repo,
+        personal_context_service=mock_personal_context_service,
+    )
+
+    events = [
+        event
+        async for event in service.process_chat_stream(
+            ChatRequest(conversation_id=conversation.id, message="What should I focus on?"),
+            user_id=user_id,
+        )
+    ]
+
+    # Verify event order: [0] = context event, [1] = token, [2] = token, [3] = done
+    assert len(events) == 4
+    context_line = events[0].strip()
+    assert context_line.startswith("data: ")
+    context_data = json.loads(context_line[6:])
+    assert context_data["type"] == "context"
+    assert context_data["context"]["memory_count"] == 2
+    assert "study" in context_data["context"]["topics"]
+    assert "work" in context_data["context"]["topics"]
+    # Ensure no internal raw IDs or scores leaked in the context payload
+    assert "experience_id" not in context_data["context"]
+    assert "score" not in context_data["context"]
+    assert "similarity" not in context_data["context"]
+
+    # Verify tokens follow
+    assert 'data: {"type":"token","content":"Based on your goal, "}' in events[1]
+    assert 'data: {"type":"token","content":"here is your plan."}' in events[2]
+    assert '"type":"done"' in events[3]
+

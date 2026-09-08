@@ -1,6 +1,38 @@
-# Second Brain AI
+# Second Brain AI — Personal Companion Experience
 
-An intelligent, modular, and extensible Personal AI Assistant built with FastAPI, PostgreSQL, LiteLLM, and React (TypeScript + Vite).
+An intelligent, modular, and personal AI Companion built with FastAPI, PostgreSQL (pgvector), LiteLLM, and React (Vite).
+
+Second Brain AI is designed to feel like a warm, calm, intelligent personal companion that remembers your experiences, adapts to your personal patterns, and reflects on your goals over time.
+
+---
+
+## 🌸 Personal Companion Architecture
+
+The Personal AI Companion sits gracefully above the existing Second Brain intelligence backend without duplicating memory or agent logic:
+
+```
+                         PERSONAL COMPANION
+                                │
+              ┌─────────────────┼─────────────────┐
+              ↓                 ↓                 ↓
+      Companion Identity      Voice Session     Visual Presence
+     (Aria / Female / "Sir") (Deterministic SM) (Ethereal Avatar)
+              │                 │                 │
+              └─────────────────┼─────────────────┘
+                                ↓
+                        EXISTING AI BRAIN
+                                │
+                ┌───────────────┼───────────────┐
+                ↓               ↓               ↓
+             Memory          Context          Tools
+```
+
+### Core Companion Capabilities:
+* **Configurable Identity**: Default persona **Aria**, featuring female presentation, respectful address as **"Sir"**, and warm, curious, follow-up inquiry style.
+* **Deterministic Voice Session State Machine**: Predictable lifecycle (`IDLE` ➔ `LISTENING` ➔ `PROCESSING` ➔ `THINKING` ➔ `SPEAKING` ➔ `LISTENING`) with zero duplicate speech.
+* **Ethereal Visual Presence**: Lightweight, fantasy-style celestial avatar responding in real-time to conversational states.
+* **Session Resilience & Token Refresh**: Built-in `POST /api/v1/auth/refresh` and automatic 401 retry to ensure voice sessions are never interrupted by normal access token expiry.
+* **Grounding & Context Visibility**: Non-intrusive memory badges showing high-level topic grounding without leaking internal vectors or database IDs.
 
 ---
 
@@ -15,61 +47,38 @@ uv sync
 # Run database migrations
 uv run alembic upgrade head
 
-# Start development server
+# Start FastAPI development server
 uv run uvicorn personal_ai.main:app --reload --app-dir src
 ```
 
 * **Backend API Base URL**: `http://127.0.0.1:8000`
-* **Swagger API Docs**: `http://127.0.0.1:8000/docs`
+* **Interactive API Documentation (Swagger)**: `http://127.0.0.1:8000/docs`
 
 ---
 
-### 2. Frontend (React + TypeScript + Vite)
+### 2. Frontend (React + Vite)
 
 ```bash
 # Navigate to frontend directory
 cd frontend
 
-# Install Node dependencies
+# Install dependencies
 npm install
 
-# Start Vite development server
+# Start development server
 npm run dev
 ```
 
 * **Frontend Web App**: `http://localhost:5173`
-* **API Base URL Configuration**: Configured via `VITE_API_BASE_URL` in `frontend/.env` (defaults to `http://127.0.0.1:8000`).
+* **Environment Configuration**: Configured via `VITE_API_BASE_URL` in `frontend/.env` (defaults to `http://localhost:8000`).
 
 ---
 
-## 🏗️ System Architecture
+## 🎙️ Voice & Browser Compatibility
 
-```
-                    Browser
-                       │
-                       ▼
-                 React Chat UI (frontend/)
-                       │
-                       ▼
-                   chatApi (services/chatApi.ts)
-                       │
-                 HTTP + SSE (fetch + getReader)
-                       │
-                       ▼
-                FastAPI Backend (src/personal_ai/)
-                       │
-                   ChatService (services/chat_service.py)
-                       │
-            ┌──────────┴──────────┐
-            ▼                     ▼
- ConversationRepository       LLMClient (ABC)
-            │                     │
-            ▼                     ▼
-       PostgreSQL            LiteLLMClient
-            │                     │
-      (asyncpg)                   ▼
-                             LLM Provider (Gemini, OpenAI, etc.)
-```
+* **Voice Input (Speech-to-Text)**: Uses `window.SpeechRecognition` / `window.webkitSpeechRecognition` with auto-silence detection and graceful text fallback.
+* **Voice Output (Text-to-Speech)**: Uses `window.speechSynthesis` with natural female voice priority and markdown pre-processing.
+* **Supported Browsers**: Google Chrome, Microsoft Edge, Safari (with microphone permissions), and Firefox (speech output with text input fallback).
 
 ---
 
@@ -80,53 +89,37 @@ second-brain-ai/
 │
 ├── src/
 │   └── personal_ai/
-│       ├── api/          # REST & SSE endpoints, CORS, routers
-│       ├── config/       # Pydantic settings & env config
-│       ├── core/         # Telemetry, logging, exceptions
-│       ├── db/           # ORM models, session setup, repositories
-│       ├── llm/          # Provider-independent LLM gateway & LiteLLM
-│       ├── models/       # Pydantic DTOs & domain models
-│       ├── services/     # Business logic orchestration
-│       └── main.py       # FastAPI app creation & middleware
+│       ├── agents/       # Personal Agent orchestration & tools
+│       ├── api/          # REST & SSE endpoints, CORS, routers (auth/refresh, chat/stream)
+│       ├── application/  # Memory, Patterns, Reflections, People services
+│       ├── config/       # Settings & environment config
+│       ├── db/           # SQLAlchemy models & pgvector repositories
+│       ├── domain/       # Core domain entities & business rules
+│       ├── llm/          # Provider-independent LLM gateway
+│       └── main.py       # FastAPI application entrypoint
 │
-├── frontend/             # React + TypeScript + Vite web UI
+├── frontend/             # React + Vite web UI
 │   ├── src/
-│   │   ├── components/   # ChatWindow, MessageList, MessageBubble, ChatInput, Header
-│   │   ├── hooks/        # useChat custom state hook
-│   │   ├── services/     # chatApi fetch-based SSE parser
-│   │   ├── types/        # TypeScript interfaces for Chat
-│   │   ├── App.tsx
-│   │   └── main.tsx
+│   │   ├── components/
+│   │   │   ├── chat/     # ChatInput, Header, MessageBubble, MessageList
+│   │   │   ├── companion/# CompanionAvatar, CompanionVoiceOverlay
+│   │   │   ├── memory/   # ContextBadge
+│   │   │   └── auth/     # AuthModal
+│   │   ├── context/      # AuthContext session provider
+│   │   ├── hooks/        # useChat, useCompanionVoiceSession, useVoiceInput, useVoiceOutput, useAuth
+│   │   ├── services/     # chatApi (SSE parser with 401 retry), authApi (with token refresh)
+│   │   ├── types/        # companion.js, chat.js
+│   │   ├── App.jsx
+│   │   ├── index.css     # Calm fantasy-companion aesthetic tokens
+│   │   └── main.jsx
 │   ├── package.json
-│   └── vite.config.ts
+│   └── vite.config.js
 │
 ├── tests/
-│   ├── unit/             # Backend & LLM unit tests
-│   └── integration/      # End-to-end API & DB tests
+│   ├── unit/             # Unit test suite
+│   └── integration/      # End-to-end integration test suite
 │
-├── docs/                 # ADR design documents (ADR 001 - ADR 005)
+├── docs/                 # Architecture Decision Records & Design Docs
 ├── migrations/           # Alembic database migrations
-├── pyproject.toml        # Backend dependencies & configuration
-├── uv.lock
 └── README.md
 ```
-
----
-
-## ✨ Current Capabilities
-
-- **Real-Time Token Streaming**: `POST /api/v1/chat/stream` streams completions via Server-Sent Events (SSE).
-- **Persistent Conversation Memory**: PostgreSQL tracks conversations and messages across sessions.
-- **Provider-Independent LLM Layer**: Supports OpenAI, Gemini, Anthropic, Ollama, DeepSeek, and OpenRouter via LiteLLM without code changes.
-- **Active Thread Persistence**: The web UI automatically persists the active `conversation_id` in `localStorage` (`second_brain_conversation_id`).
-- **Interactive Controls**: Features a "New Chat" button, multiline input, auto-scroll, loading indicators, and error banners.
-
----
-
-## ⚠️ Current Limitations
-
-- **No Authentication**: User accounts and identity systems are not yet implemented.
-- **No Long-Term Personal Memory**: Entity extraction and persistent facts are deferred to future sprints.
-- **No Vector Search / RAG**: Embeddings, vector databases (pgvector), and document retrieval are deferred to future sprints.
-- **No Tools / Agents**: Function calling, external integrations, and autonomous agents are deferred to future sprints.
-- **No UI History Restoration Yet**: The UI restores `conversation_id` on refresh to continue the backend thread, but full history GET fetching will be added in a future PR.

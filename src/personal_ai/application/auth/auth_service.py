@@ -1,3 +1,5 @@
+import uuid
+
 from personal_ai.core.auth import create_access_token, hash_password, verify_password
 from personal_ai.core.exceptions import AppException
 from personal_ai.core.logger import get_logger
@@ -93,3 +95,32 @@ class AuthService:
             access_token=access_token,
             token_type="bearer",
         )
+
+    async def refresh_user_token(self, user_id: uuid.UUID) -> TokenResponse:
+        """Issue a fresh JWT access token for an authenticated user.
+
+        Args:
+            user_id: The authenticated user's unique UUID.
+
+        Returns:
+            TokenResponse: Newly minted JWT access token and token type.
+
+        Raises:
+            AppException(401): If the user no longer exists in the system.
+        """
+        user = await self._user_repo.get_user_by_id(user_id)
+        if not user:
+            logger.warning("Token refresh attempted for non-existent user [user_id=%s]", user_id)
+            raise AppException(
+                message="User not found or session invalid.",
+                status_code=401,
+            )
+
+        new_access_token = create_access_token(user_id=user.id)
+        logger.info("User token refreshed successfully [user_id=%s]", user.id)
+
+        return TokenResponse(
+            access_token=new_access_token,
+            token_type="bearer",
+        )
+
