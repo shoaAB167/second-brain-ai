@@ -1,80 +1,109 @@
-# Personal AI Product Experience Architecture
+# Personal AI Companion Experience Architecture
 
-## 1. Overview & Product Philosophy
+## 1. Overview & Companion Philosophy
 
-The Personal AI Product Experience provides a calm, intelligent, personal, trustworthy, and interactive interface for Second Brain AI.
+The Personal AI Companion Experience provides a calm, warm, intelligent, and human-like interface for Second Brain AI.
 
-Second Brain AI is designed to feel like a dedicated personal workspace and conversational companion grounded in your long-term memory.
+Rather than feeling like a generic chatbot or a sci-fi robot/HUD, Second Brain presents a consistent, graceful personal presence—configured by default as **Aria**, a female companion who addresses the user respectfully as **"Sir"**, engages with genuine curiosity, and asks thoughtful follow-up questions.
 
 ### Core Architecture
 
 ```
-                    ┌── TEXT ────────┐
-                    │                │
-USER ───────────────┼── VOICE ───────┼──→ PERSONAL BRAIN (Memory + Context + Agent + Tools)
-                    │                │
-                    └── JARVIS MODE ─┘
+                         PERSONAL COMPANION
+                                │
+              ┌─────────────────┼─────────────────┐
+              ↓                 ↓                 ↓
+      Companion Identity      Voice Session     Visual Presence
+     (Aria / Female / "Sir") (Deterministic SM) (Ethereal Avatar)
+              │                 │                 │
+              └─────────────────┼─────────────────┘
+                                ↓
+                        EXISTING AI BRAIN
+                                │
+                ┌───────────────┼───────────────┐
+                ↓               ↓               ↓
+             Memory          Context          Tools
 ```
 
-All interfaces interact with the identical backend intelligence pipeline:
-1. **User Authentication & Isolation**: User session scoped via JWT Bearer tokens.
-2. **Context Retrieval**: Dimension-aware personal context and experiences.
-3. **Agent Orchestration**: `PersonalAgent` with deterministic tools and memory search.
+The companion is an interface layer that sits **above** the existing intelligence architecture:
+1. **User Authentication & Session Resilience**: User session scoped via JWT Bearer tokens with automatic token refresh (`POST /api/v1/auth/refresh`).
+2. **Context Retrieval**: Dimension-aware personal context and memory evolution.
+3. **Agent Orchestration**: `PersonalAgent` informed by companion persona guidelines without duplicating agent logic.
 4. **Streaming Response**: Server-Sent Events (SSE) yielded incrementally to the client.
 
 ---
 
-## 2. Voice & JARVIS Interactive System
+## 2. Companion Identity & Conversational Guidelines
 
-### ⚡ JARVIS Live Voice Mode
-- **Animated Neural Orb**: Multi-layered concentric rotating rings, pulsing energy core, and dynamic soundwave frequency visualizers.
-- **Visual State Reactions**:
-  - 🔵 **Listening**: Electric cyan/blue pulse with reactive audio waveforms.
-  - 🟣 **Thinking / Processing**: Deep violet/indigo orbital rotation.
-  - 🟢/🟠 **Speaking**: Resonating acoustic pulse with real-time live captions.
-  - ⚪ **Idle**: Calm breathing aura.
-- **Continuous Hands-Free Conversational Loop (Turn-Taking)**:
-  - User speaks → auto-silence detection submits prompt after ~1.5s pause.
-  - Second Brain streams response and speaks it aloud with natural TTS.
-  - When speech concludes (`onSpeechEnd`), microphone automatically re-opens for hands-free dialogue.
-  - Instant interruptibility: clicking the orb or tapping `Interrupt` immediately halts TTS speech and begins listening.
+The companion identity is defined in `frontend/src/types/companion.js` and supplied to the existing backend agent pipeline via structured system instructions:
 
-### Voice Input (Speech-to-Text)
-- Uses the native browser Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`).
-- Explicit state machine: `IDLE` → `LISTENING` → `PROCESSING` → `IDLE`.
-- Displays live transcription in the composer, allowing the user to edit or cancel before sending.
-- Gracefully degrades to standard text input when unsupported or when permissions are denied.
-
-### Voice Output (Text-to-Speech)
-- Uses the browser `window.speechSynthesis` API.
-- Cleans and strips markdown formatting (code blocks, asterisks, URLs) to produce natural spoken speech.
-- Provides per-message speaker toggle (`Listen` / `Stop`) with active speaking indicators.
-- Automatically cancels active speech synthesis when a new streaming generation starts or when the user navigates.
+- **Name**: Configurable (default: `"Aria"`).
+- **Presentation**: Female personal companion.
+- **User Address**: Respectful address as `"Sir"` when natural in conversation.
+- **Tone & Style**: Warm, attentive, curious, concise when appropriate, asking meaningful follow-up questions to understand the user's intent.
+- **Honesty Invariant**: The companion never claims consciousness or physical embodiment.
 
 ---
 
-## 3. Safe Personal Context Visibility
+## 3. Deterministic Voice Session State Machine
 
-Second Brain's primary differentiator is that it remembers the user. The interface surfaces this grounding subtly and respectfully:
+Voice interactions are orchestrated by `useCompanionVoiceSession`, which acts as the single source of truth for conversational turn-taking:
 
-- **Subtle Context Indicator**: Assistant responses grounded in memory display a subtle badge (e.g. `✨ Using 3 memories`).
-- **Expandable Grounding**: Users can inspect the high-level topics (e.g., `Work`, `Health`, `Study`) that guided the response.
-- **Privacy & Safety Invariant**: Internal implementation details—such as raw vector similarity scores, embedding dimensions, database UUIDs, ranking weights, and raw memory retrieval metadata—are **never** exposed to the user or rendered into client-side executable contexts.
+```
+                  ┌───────────────┐
+                  │     IDLE      │
+                  └───────┬───────┘
+                          │ startSession()
+                          ▼
+                  ┌───────────────┐
+   ┌─────────────►│   LISTENING   │◄──────────────────────┐
+   │              └───────┬───────┘                       │
+   │                      │ user finishes speech          │
+   │                      ▼                               │
+   │              ┌───────────────┐                       │
+   │              │  PROCESSING   │                       │
+   │              └───────┬───────┘                       │
+   │                      │ prompt sent                   │
+   │                      ▼                               │
+   │              ┌───────────────┐                       │
+   │              │   THINKING    │                       │
+   │              └───────┬───────┘                       │
+   │                      │ stream finishes               │
+   │                      ▼                               │
+   │              ┌───────────────┐                       │
+   │ interrupt()  │   SPEAKING    │                       │
+   └──────────────┴───────┬───────┘                       │
+                          │ speech ends (hands-free ON)   │
+                          └───────────────────────────────┘
+```
+
+### Key Safeguards:
+- **Duplicate Speech Prevention**: Each assistant response message ID is tracked and spoken exactly once.
+- **Stale Closure Protection**: Recognition instances and timers use React `useRef` to eliminate closure-capture bugs.
+- **Microphone Lockout**: Microphone listening is explicitly blocked while Text-to-Speech is speaking.
+- **Instant Interruption**: User speech or clicking `Interrupt` instantly cancels speech synthesis and begins listening.
 
 ---
 
-## 4. Streaming & Conversation State
+## 4. Visual Presence & Ethereal Avatar
 
-- **SSE Streaming**: Subscribes to `POST /api/v1/chat/stream` using an asynchronous stream reader.
-- **Incremental Rendering**: Assistant message tokens render progressively with a blinking cursor.
-- **Interruption & Control**: Users can click `Stop` at any point during streaming to abort the active `AbortController`.
-- **Thread Persistence**: Conversation thread IDs are managed in local session storage and preserved across page interactions.
-- **Retry Mechanism**: If a network or backend failure occurs, the user can click `Retry` to seamlessly re-dispatch the prompt.
+The companion features a lightweight, fantasy-style celestial avatar (`CompanionAvatar.jsx`):
+- **IDLE**: Gentle breathing starlight aura with soft luminous pulsing.
+- **LISTENING**: Attentive focus pulse with radiant celestial waves.
+- **THINKING**: Soft shimmering celestial swirl.
+- **SPEAKING**: Harmonic luminous resonance synchronized with voice narration.
 
 ---
 
-## 5. Responsive Design & Accessibility
+## 5. Token Refresh & Session Resilience
 
-- **Breakpoints**: Engineered for desktop (1440px), laptop (1024px), tablet (768px), and mobile (390px).
-- **Mobile Experience**: Compact composer, touch-friendly touch targets, hidden non-critical badges, and vertical layout.
-- **Accessibility**: Semantic HTML elements (`<main>`, `<header>`, `<button>`, `role="article"`), keyboard navigation (`Enter` to send, `Shift+Enter` for newlines), visible focus states, and ARIA labels.
+- **Backend**: `POST /api/v1/auth/refresh` issues a fresh access token for authenticated user sessions.
+- **Frontend**: `chatApi.js` intercepts 401 Unauthorized errors and performs an automatic silent token refresh via deduplicated `refreshToken()` before retrying the chat request once.
+- Voice sessions are never abruptly severed due to routine token expiration.
+
+---
+
+## 6. Safe Personal Context Visibility
+
+- **Context Grounding**: Assistant responses display a subtle indicator (e.g. `✨ Guided by 3 memories`).
+- **Privacy Guarantee**: Raw database UUIDs, internal vector similarity scores, ranking weights, and embedding dimensions are never exposed.

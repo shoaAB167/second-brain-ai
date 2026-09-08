@@ -1,28 +1,38 @@
-# Second Brain AI
+# Second Brain AI — Personal Companion Experience
 
-An intelligent, modular, and personal AI Assistant built with FastAPI, PostgreSQL (pgvector), LiteLLM, and React (Vite).
+An intelligent, modular, and personal AI Companion built with FastAPI, PostgreSQL (pgvector), LiteLLM, and React (Vite).
 
-Second Brain AI is designed to feel like a calm, trustworthy personal workspace that remembers your experiences, adapts to your personal patterns, and reflects on your goals over time.
+Second Brain AI is designed to feel like a warm, calm, intelligent personal companion that remembers your experiences, adapts to your personal patterns, and reflects on your goals over time.
 
 ---
 
-## 🏗️ Unified Brain Architecture
+## 🌸 Personal Companion Architecture
 
-Voice and Text are equal input/output channels accessing the same Personal Brain backend without duplicating agent logic or retrieval pipelines:
+The Personal AI Companion sits gracefully above the existing Second Brain intelligence backend without duplicating memory or agent logic:
 
 ```
-                    ┌── TEXT ──┐
-                    │          │
-USER ───────────────┤          ├──→ PERSONAL BRAIN (Memory + Context + Agent + Tools)
-                    │          │
-                    └── VOICE ─┘
+                         PERSONAL COMPANION
+                                │
+              ┌─────────────────┼─────────────────┐
+              ↓                 ↓                 ↓
+      Companion Identity      Voice Session     Visual Presence
+     (Aria / Female / "Sir") (Deterministic SM) (Ethereal Avatar)
+              │                 │                 │
+              └─────────────────┼─────────────────┘
+                                ↓
+                        EXISTING AI BRAIN
+                                │
+                ┌───────────────┼───────────────┐
+                ↓               ↓               ↓
+             Memory          Context          Tools
 ```
 
-Both interfaces share identical:
-* **Long-Term Memory & Experiences**: High-dimensional semantic embeddings (pgvector) and emotion-grounded memory evolution.
-* **Personal Context Retrieval**: Dimension-aware retrieval layer filtered through canonical `MemoryQualityService`.
-* **Personal Agent & Deterministic Tools**: Tool calling, memory search, and structured context grounding.
-* **User Isolation & Safety**: JWT Bearer authentication scoping all queries, memories, patterns, and reflections to the authenticated user.
+### Core Companion Capabilities:
+* **Configurable Identity**: Default persona **Aria**, featuring female presentation, respectful address as **"Sir"**, and warm, curious, follow-up inquiry style.
+* **Deterministic Voice Session State Machine**: Predictable lifecycle (`IDLE` ➔ `LISTENING` ➔ `PROCESSING` ➔ `THINKING` ➔ `SPEAKING` ➔ `LISTENING`) with zero duplicate speech.
+* **Ethereal Visual Presence**: Lightweight, fantasy-style celestial avatar responding in real-time to conversational states.
+* **Session Resilience & Token Refresh**: Built-in `POST /api/v1/auth/refresh` and automatic 401 retry to ensure voice sessions are never interrupted by normal access token expiry.
+* **Grounding & Context Visibility**: Non-intrusive memory badges showing high-level topic grounding without leaking internal vectors or database IDs.
 
 ---
 
@@ -64,34 +74,11 @@ npm run dev
 
 ---
 
-## 🎙️ Voice & Accessibility Capabilities
+## 🎙️ Voice & Browser Compatibility
 
-Second Brain utilizes browser-native Web Speech APIs to provide voice interaction without introducing heavyweight audio servers:
-
-* **Voice Input (Speech-to-Text)**:
-  * Uses `window.SpeechRecognition` / `window.webkitSpeechRecognition`.
-  * Real-time transcription into the message composer.
-  * Explicit states: `idle`, `listening`, `processing`, and `error`.
-  * Gracefully degrades to standard text input on unsupported browsers.
-* **Voice Output (Text-to-Speech)**:
-  * Uses `window.speechSynthesis` with markdown stripping for natural narration.
-  * User-controlled speaker action on assistant messages (`Listen` / `Stop`).
-  * Automatic cancellation of speech synthesis upon new stream generation or navigation.
-  * Optional **Voice Mode** toggle to automatically narrate assistant responses.
-
-### Browser Compatibility:
-* **Google Chrome / Chromium**: Full speech recognition and synthesis support.
-* **Safari / WebKit**: Speech recognition (`webkitSpeechRecognition`) and synthesis supported with microphone permission.
-* **Firefox / Other**: Speech synthesis supported; speech recognition falls back gracefully to standard text input.
-
----
-
-## 🛡️ Privacy & Safe Memory Grounding
-
-Second Brain reinforces trust by surfacing context subtly:
-* **Grounding Badge**: Responses grounded in past memory display a subtle indicator (e.g. `✨ Using 3 memories`).
-* **Safe Inspection**: Users can inspect the high-level domain topics that informed the answer.
-* **Privacy Guardrails**: Raw database UUIDs, internal vector similarity scores, ranking weights, and embedding dimensions are strictly kept internal and never rendered to client-side views.
+* **Voice Input (Speech-to-Text)**: Uses `window.SpeechRecognition` / `window.webkitSpeechRecognition` with auto-silence detection and graceful text fallback.
+* **Voice Output (Text-to-Speech)**: Uses `window.speechSynthesis` with natural female voice priority and markdown pre-processing.
+* **Supported Browsers**: Google Chrome, Microsoft Edge, Safari (with microphone permissions), and Firefox (speech output with text input fallback).
 
 ---
 
@@ -103,7 +90,7 @@ second-brain-ai/
 ├── src/
 │   └── personal_ai/
 │       ├── agents/       # Personal Agent orchestration & tools
-│       ├── api/          # REST & SSE endpoints, CORS, routers
+│       ├── api/          # REST & SSE endpoints, CORS, routers (auth/refresh, chat/stream)
 │       ├── application/  # Memory, Patterns, Reflections, People services
 │       ├── config/       # Settings & environment config
 │       ├── db/           # SQLAlchemy models & pgvector repositories
@@ -113,13 +100,17 @@ second-brain-ai/
 │
 ├── frontend/             # React + Vite web UI
 │   ├── src/
-│   │   ├── components/   # ChatInput, Header, MessageBubble, MessageList, ContextBadge, AuthModal
+│   │   ├── components/
+│   │   │   ├── chat/     # ChatInput, Header, MessageBubble, MessageList
+│   │   │   ├── companion/# CompanionAvatar, CompanionVoiceOverlay
+│   │   │   ├── memory/   # ContextBadge
+│   │   │   └── auth/     # AuthModal
 │   │   ├── context/      # AuthContext session provider
-│   │   ├── hooks/        # useChat, useVoiceInput, useVoiceOutput, useAuth
-│   │   ├── services/     # chatApi (SSE stream parser), authApi
-│   │   ├── types/        # TypeScript/JS models and constants
+│   │   ├── hooks/        # useChat, useCompanionVoiceSession, useVoiceInput, useVoiceOutput, useAuth
+│   │   ├── services/     # chatApi (SSE parser with 401 retry), authApi (with token refresh)
+│   │   ├── types/        # companion.js, chat.js
 │   │   ├── App.jsx
-│   │   ├── index.css     # Design tokens & responsive styles
+│   │   ├── index.css     # Calm fantasy-companion aesthetic tokens
 │   │   └── main.jsx
 │   ├── package.json
 │   └── vite.config.js

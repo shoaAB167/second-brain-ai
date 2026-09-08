@@ -8,7 +8,8 @@ export function Header({
   voiceModeEnabled,
   onToggleVoiceMode,
   voiceSupported,
-  onOpenJarvis,
+  companionName = "Aria",
+  onOpenCompanion,
 }) {
   const { isAuthenticated, userEmail, logout, openAuthModal } = useAuth();
 
@@ -17,7 +18,7 @@ export function Header({
       <div className="header-brand">
         <div className="brand-title-group">
           <h1 className="header-title">Second Brain</h1>
-          <span className="brand-tagline">Personal Intelligence</span>
+          <span className="brand-tagline">Personal Companion</span>
         </div>
         {conversationId && (
           <span className="conversation-badge" title={`Thread ID: ${conversationId}`}>
@@ -27,21 +28,21 @@ export function Header({
       </div>
 
       <div className="header-actions">
-        {/* JARVIS Interactive Voice Mode Trigger */}
+        {/* Companion Interactive Voice Presence Trigger */}
         {voiceSupported && (
           <button
             type="button"
-            className="btn-jarvis-launch"
-            onClick={onOpenJarvis}
-            title="Launch JARVIS Live Voice Experience"
-            aria-label="Launch JARVIS Voice System"
+            className="btn-companion-launch"
+            onClick={onOpenCompanion}
+            title={`Open Voice Sanctuary with ${companionName}`}
+            aria-label={`Open Voice Sanctuary with ${companionName}`}
           >
-            <span className="jarvis-pulse-dot" />
-            <span className="jarvis-label">⚡ JARVIS</span>
+            <span className="companion-sparkle-dot" />
+            <span className="companion-launch-label">✨ Talk with {companionName}</span>
           </button>
         )}
 
-        {/* Optional Voice Conversation Mode Toggle */}
+        {/* Voice Read Aloud Toggle */}
         {voiceSupported && (
           <button
             type="button"
@@ -50,14 +51,14 @@ export function Header({
             aria-pressed={voiceModeEnabled}
             title={
               voiceModeEnabled
-                ? "Voice Mode Active: Assistant will read responses aloud"
-                : "Enable Auto Voice Mode"
+                ? "Auto Voice Active: Companion will speak responses aloud"
+                : "Enable Auto Voice"
             }
           >
             <span className="voice-mode-icon" aria-hidden="true">
               {voiceModeEnabled ? "🔊" : "🔈"}
             </span>
-            <span className="voice-mode-label">Voice Mode</span>
+            <span className="voice-mode-label">Auto Voice</span>
           </button>
         )}
 

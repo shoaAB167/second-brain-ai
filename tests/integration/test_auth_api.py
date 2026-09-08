@@ -92,3 +92,32 @@ def test_login_api_invalid_credentials_returns_generic_401() -> None:
 
     assert response.status_code == 401
     assert "invalid email or password" in response.text.lower()
+
+
+def test_refresh_api_success() -> None:
+    """Verify POST /api/v1/auth/refresh returns a new JWT when called with a valid Bearer token."""
+    reg_payload = {
+        "email": "refreshapi@example.com",
+        "password": "securepassword123",
+    }
+    client.post("/api/v1/auth/register", json=reg_payload)
+
+    login_res = client.post("/api/v1/auth/login", json=reg_payload)
+    token = login_res.json()["access_token"]
+
+    response = client.post(
+        "/api/v1/auth/refresh",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "access_token" in data
+    assert data["token_type"] == "bearer"
+
+
+def test_refresh_api_unauthorized_without_token() -> None:
+    """Verify POST /api/v1/auth/refresh returns 401 when missing Authorization header."""
+    response = client.post("/api/v1/auth/refresh")
+    assert response.status_code == 401
+

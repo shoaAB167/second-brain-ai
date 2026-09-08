@@ -1,6 +1,9 @@
+from typing import Optional
+import uuid
+
 from fastapi import APIRouter, Depends, status
 
-from personal_ai.api.dependencies import get_auth_service
+from personal_ai.api.dependencies import get_auth_service, get_current_user_id
 from personal_ai.application.auth.auth_service import AuthService
 from personal_ai.domain.user.models import (
     LoginRequest,
@@ -40,3 +43,20 @@ async def login(
 ) -> TokenResponse:
     """Authenticate credentials and issue a Bearer JWT token."""
     return await auth_service.login_user(request)
+
+
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Refresh access token",
+    description="Exchange a valid JWT access token for a freshly minted token.",
+)
+async def refresh(
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> TokenResponse:
+    """Issue a new access token for the authenticated user session."""
+    return await auth_service.refresh_user_token(current_user_id)
+
+

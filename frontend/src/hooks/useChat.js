@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { streamChatResponse } from "../services/chatApi";
 import { useAuth } from "../context/AuthContext";
 import { MessageRole, StreamEventType } from "../types/chat";
+import { buildCompanionSystemPrompt } from "../types/companion";
 
 const LOCAL_STORAGE_KEY = "second_brain_conversation_id";
 
@@ -69,7 +70,7 @@ export function useChat() {
   }, []);
 
   const sendMessage = useCallback(
-    async (text) => {
+    async (text, customSystemPrompt = null) => {
       const trimmed = text ? text.trim() : "";
       if (!trimmed || isStreaming) return;
 
@@ -117,12 +118,14 @@ export function useChat() {
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
 
       const currentConvId = conversationId;
+      const systemPrompt = customSystemPrompt || buildCompanionSystemPrompt();
 
       try {
         await streamChatResponse(
           {
             message: trimmed,
             conversation_id: currentConvId,
+            system_prompt: systemPrompt,
             token,
           },
           (event) => {
@@ -188,9 +191,12 @@ export function useChat() {
 
   const retryLastMessage = useCallback(() => {
     if (lastUserPrompt && !isStreaming) {
-      // Remove last failed assistant message and resend
       setMessages((prev) => {
-        if (prev.length > 0 && prev[prev.length - 1].role === MessageRole.ASSISTANT && !prev[prev.length - 1].content) {
+        if (
+          prev.length > 0 &&
+          prev[prev.length - 1].role === MessageRole.ASSISTANT &&
+          !prev[prev.length - 1].content
+        ) {
           return prev.slice(0, prev.length - 2);
         }
         return prev;

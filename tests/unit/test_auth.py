@@ -171,3 +171,32 @@ def test_invalid_and_expired_jwt_raises_401() -> None:
     with pytest.raises(AppException) as exc_invalid:
         decode_access_token("invalid.jwt.token")
     assert exc_invalid.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_refresh_user_token_succeeds(db_session: AsyncSession) -> None:
+    """Verify refresh_user_token produces a valid newly decoded access token."""
+    repo = SQLAlchemyUserRepository(session=db_session)
+    service = AuthService(user_repo=repo)
+
+    request = RegisterRequest(email="refresh@example.com", password="securepassword123")
+    user = await service.register_user(request)
+
+    token_res = await service.refresh_user_token(user.id)
+    assert token_res.access_token is not None
+    assert token_res.token_type == "bearer"
+
+    decoded_id = decode_access_token(token_res.access_token)
+    assert decoded_id == user.id
+
+
+@pytest.mark.asyncio
+async def test_refresh_nonexistent_user_raises_401(db_session: AsyncSession) -> None:
+    """Verify refresh_user_token fails with 401 for deleted/unknown user."""
+    repo = SQLAlchemyUserRepository(session=db_session)
+    service = AuthService(user_repo=repo)
+
+    with pytest.raises(AppException) as exc_info:
+        await service.refresh_user_token(uuid.uuid4())
+    assert exc_info.value.status_code == 401
+

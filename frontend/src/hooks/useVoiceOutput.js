@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { VoiceOutputState } from "../types/chat";
 
 /**
- * Utility to strip markdown characters from text for natural speech synthesis.
+ * Utility to strip markdown characters and code blocks from text for natural speech synthesis.
  */
-function cleanTextForSpeech(text) {
+function cleanTextForCompanionSpeech(text) {
   if (!text) return "";
   return text
-    .replace(/```[\s\S]*?```/g, "code block omitted.") // Replace multiline code
+    .replace(/```[\s\S]*?```/g, "I have shared a code snippet in our notes.") // Replace code blocks
     .replace(/`([^`]+)`/g, "$1") // Inline code
     .replace(/\*\*([^*]+)\*\*/g, "$1") // Bold
     .replace(/\*([^*]+)\*/g, "$1") // Italic
@@ -19,12 +19,13 @@ function cleanTextForSpeech(text) {
 }
 
 /**
- * Hook providing speech synthesis (text-to-speech) capabilities via window.speechSynthesis.
- * Manages active speaking message, user controls (play/pause/stop), cancellation, and speech lifecycle callbacks.
+ * Hook providing speech synthesis (text-to-speech) capabilities with female persona voice selection.
+ * Manages active speaking message, user controls (play/pause/stop), interruption, and voiceschanged lifecycle.
  */
 export function useVoiceOutput({ onSpeechEnd, onSpeechStart } = {}) {
   const [voiceOutputState, setVoiceOutputState] = useState(VoiceOutputState.IDLE);
   const [activeMessageId, setActiveMessageId] = useState(null);
+  const [availableVoices, setAvailableVoices] = useState([]);
 
   const isSupported =
     typeof window !== "undefined" && Boolean(window.speechSynthesis);
@@ -40,6 +41,59 @@ export function useVoiceOutput({ onSpeechEnd, onSpeechStart } = {}) {
   useEffect(() => {
     onSpeechStartRef.current = onSpeechStart;
   }, [onSpeechStart]);
+
+  // Load and cache voices, handling asynchronous voiceschanged in Chrome/Edge/Safari
+  useEffect(() => {
+    if (!isSupported) return;
+
+    const updateVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices && voices.length > 0) {
+        setAvailableVoices(voices);
+      }
+    };
+
+    updateVoices();
+
+    if (window.speechSynthesis.onvoiceschanged !== undefined) {
+      window.speechSynthesis.onvoiceschanged = updateVoices;
+    }
+
+    return () => {
+      if (window.speechSynthesis.onvoiceschanged === updateVoices) {
+        window.speechSynthesis.onvoiceschanged = null;
+      }
+    };
+  }, [isSupported]);
+
+  const selectFemaleCompanionVoice = useCallback(() => {
+    const voices = availableVoices.length > 0 ? availableVoices : (typeof window !== "undefined" && window.speechSynthesis ? window.speechSynthesis.getVoices() : []);
+    if (!voices || voices.length === 0) return null;
+
+    // Preference list for warm, clear female voices
+    const preferredNames = [
+      "Samantha",
+      "Victoria",
+      "Karen",
+      "Serena",
+      "Google UK English Female",
+      "Google US English",
+      "Microsoft Zira",
+      "Fiona",
+      "Moira",
+      "Natural",
+    ];
+
+    for (const name of preferredNames) {
+      const match = voices.find(
+        (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes(name.toLowerCase())
+      );
+      if (match) return match;
+    }
+
+    // Fallback: any English voice
+    return voices.find((v) => v.lang.startsWith("en")) || voices[0] || null;
+  }, [availableVoices]);
 
   const stop = useCallback(() => {
     if (!isSupported) return;
@@ -80,33 +134,21 @@ export function useVoiceOutput({ onSpeechEnd, onSpeechStart } = {}) {
       // Stop any ongoing speech first
       stop();
 
-      const cleanedText = cleanTextForSpeech(text);
+      const cleanedText = cleanTextForCompanionSpeech(text);
       if (!cleanedText) {
         if (onSpeechEndRef.current) {
-          onSpeechEndRef.current();
+          onSpeechEndRef.current(messageId);
         }
         return;
       }
 
       const utterance = new SpeechSynthesisUtterance(cleanedText);
-      utterance.rate = 1.05; // slightly faster, crisp voice cadence
-      utterance.pitch = 1.0;
+      utterance.rate = 1.0;
+      utterance.pitch = 1.05; // Gentle, warm companion pitch
 
-      // Select a natural, crisp voice if available
-      const voices = window.speechSynthesis.getVoices();
-      const preferredVoice = voices.find(
-        (v) =>
-          v.lang.startsWith("en") &&
-          (v.name.includes("Natural") ||
-            v.name.includes("Google") ||
-            v.name.includes("Samantha") ||
-            v.name.includes("Daniel") ||
-            v.name.includes("Arthur") ||
-            v.name.includes("Oliver"))
-      ) || voices.find((v) => v.lang.startsWith("en"));
-
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
+      const femaleVoice = selectFemaleCompanionVoice();
+      if (femaleVoice) {
+        utterance.voice = femaleVoice;
       }
 
       utterance.onstart = () => {
@@ -138,7 +180,7 @@ export function useVoiceOutput({ onSpeechEnd, onSpeechStart } = {}) {
       utteranceRef.current = utterance;
       window.speechSynthesis.speak(utterance);
     },
-    [isSupported, stop]
+    [isSupported, stop, selectFemaleCompanionVoice]
   );
 
   const toggleSpeak = useCallback(
@@ -170,6 +212,7 @@ export function useVoiceOutput({ onSpeechEnd, onSpeechStart } = {}) {
     isSpeaking: voiceOutputState === VoiceOutputState.SPEAKING,
     isPaused: voiceOutputState === VoiceOutputState.PAUSED,
     activeMessageId,
+    availableVoices,
     speak,
     stop,
     pause,

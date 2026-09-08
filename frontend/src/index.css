@@ -1185,57 +1185,57 @@ body {
 }
 
 /* ==========================================================================
-   JARVIS Voice Experience & Dynamic Neural Orb
+   Personal AI Companion Experience & Ethereal Avatar
    ========================================================================== */
 
 /* Header Launch Button */
-.btn-jarvis-launch {
+.btn-companion-launch {
   display: flex;
   align-items: center;
   gap: 0.45rem;
   font-family: var(--font-sans);
-  font-size: 0.775rem;
-  font-weight: 700;
-  padding: 0.45rem 0.85rem;
-  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.45rem 0.95rem;
+  border-radius: var(--radius-full);
   cursor: pointer;
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.15), rgba(99, 102, 241, 0.2));
-  color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.4);
-  box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(244, 114, 182, 0.25));
+  color: #f3e8ff;
+  border: 1px solid rgba(192, 132, 252, 0.45);
+  box-shadow: 0 0 14px rgba(168, 85, 247, 0.25);
   transition: all 0.2s ease;
 }
 
-.btn-jarvis-launch:hover {
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.25), rgba(99, 102, 241, 0.35));
-  border-color: #38bdf8;
-  box-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
+.btn-companion-launch:hover {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.35), rgba(244, 114, 182, 0.4));
+  border-color: #e9d5ff;
+  box-shadow: 0 0 18px rgba(244, 114, 182, 0.4);
   transform: translateY(-1px);
 }
 
-.jarvis-pulse-dot {
+.companion-sparkle-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background-color: #38bdf8;
-  box-shadow: 0 0 8px #38bdf8;
-  animation: pulseJarvisDot 1.5s infinite ease-in-out;
+  background-color: #f472b6;
+  box-shadow: 0 0 8px #f472b6;
+  animation: pulseCompanionDot 1.8s infinite ease-in-out;
 }
 
-@keyframes pulseJarvisDot {
-  0%, 100% { transform: scale(0.85); opacity: 0.7; }
-  50% { transform: scale(1.3); opacity: 1; }
+@keyframes pulseCompanionDot {
+  0%, 100% { transform: scale(0.8); opacity: 0.7; }
+  50% { transform: scale(1.35); opacity: 1; }
 }
 
-/* JARVIS Fullscreen Backdrop & HUD */
-.jarvis-overlay-backdrop {
+/* Companion Voice Sanctuary Backdrop */
+.companion-overlay-backdrop {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: radial-gradient(circle at center, rgba(15, 23, 42, 0.96) 0%, rgba(2, 6, 23, 0.98) 100%);
-  backdrop-filter: blur(16px);
+  background: radial-gradient(circle at center, rgba(23, 15, 38, 0.95) 0%, rgba(9, 6, 18, 0.98) 100%);
+  backdrop-filter: blur(18px);
   z-index: 2000;
   display: flex;
   align-items: center;
@@ -1243,106 +1243,109 @@ body {
   animation: fadeIn 0.25s ease-out;
 }
 
-.jarvis-hud-container {
+.companion-sanctuary-card {
   width: 100%;
-  max-width: 860px;
-  height: 92vh;
+  max-width: 820px;
+  height: 90vh;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 1.5rem;
+  padding: 1.75rem;
   box-sizing: border-box;
+  background: rgba(18, 14, 30, 0.6);
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
 }
 
-/* HUD Top Header */
-.jarvis-hud-header {
+/* Sanctuary Header */
+.sanctuary-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid rgba(56, 189, 248, 0.2);
-  padding-bottom: 0.85rem;
+  border-bottom: 1px solid rgba(192, 132, 252, 0.15);
+  padding-bottom: 1rem;
 }
 
-.hud-brand {
+.companion-identity-badge {
   display: flex;
   align-items: center;
   gap: 0.75rem;
 }
 
-.hud-indicator-dot {
+.companion-presence-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background-color: #06b6d4;
-  box-shadow: 0 0 10px #06b6d4;
+  background-color: #a855f7;
+  box-shadow: 0 0 10px #c084fc;
 }
 
-.hud-title-wrap {
+.companion-header-text {
   display: flex;
   flex-direction: column;
 }
 
-.hud-title {
+.companion-name-title {
   font-family: var(--font-sans);
-  font-weight: 800;
-  font-size: 1.1rem;
-  letter-spacing: 0.08em;
-  color: #38bdf8;
+  font-weight: 700;
+  font-size: 1.2rem;
+  letter-spacing: -0.01em;
+  color: #f5d0fe;
 }
 
-.hud-sub {
-  font-size: 0.65rem;
-  color: var(--text-muted);
-  letter-spacing: 0.12em;
+.companion-role-sub {
+  font-size: 0.725rem;
+  color: #c4b5fd;
+  font-weight: 500;
 }
 
-.hud-status-badges {
+.sanctuary-top-actions {
   display: flex;
   align-items: center;
   gap: 0.75rem;
 }
 
-.hud-memory-badge {
-  font-size: 0.725rem;
-  font-weight: 600;
-  padding: 0.25rem 0.65rem;
+.sanctuary-context-badge {
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.25rem 0.75rem;
   border-radius: var(--radius-full);
-  background: rgba(99, 102, 241, 0.15);
-  border: 1px solid rgba(99, 102, 241, 0.4);
-  color: #c7d2fe;
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(192, 132, 252, 0.35);
+  color: #e9d5ff;
 }
 
-.hud-close-btn {
-  background: rgba(255, 255, 255, 0.05);
+.sanctuary-close-btn {
+  background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  color: var(--text-secondary);
+  color: #e2e8f0;
   font-family: var(--font-sans);
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 0.35rem 0.75rem;
+  font-size: 0.775rem;
+  font-weight: 500;
+  padding: 0.4rem 0.85rem;
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.hud-close-btn:hover {
-  background: rgba(239, 68, 68, 0.2);
-  border-color: #ef4444;
-  color: #fca5a5;
+.sanctuary-close-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
 }
 
-/* Center Stage & Neural Orb */
-.jarvis-center-stage {
+/* Center Stage & Avatar */
+.companion-center-stage {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 1.5rem 0;
+  padding: 1rem 0;
 }
 
-.jarvis-orb-container {
-  width: 200px;
-  height: 200px;
+.companion-avatar-wrap {
+  width: 180px;
+  height: 180px;
   position: relative;
   display: flex;
   align-items: center;
@@ -1351,284 +1354,271 @@ body {
   margin-bottom: 1.25rem;
 }
 
-.orb-aura-glow {
+.avatar-ambient-glow {
   position: absolute;
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(56, 189, 248, 0.25) 0%, rgba(99, 102, 241, 0.08) 60%, transparent 70%);
-  animation: orbBreathe 4s infinite ease-in-out;
+  background: radial-gradient(circle, rgba(192, 132, 252, 0.25) 0%, rgba(244, 114, 182, 0.1) 55%, transparent 75%);
+  animation: celestialBreathe 4.5s infinite ease-in-out;
 }
 
-.jarvis-orb-container.listening .orb-aura-glow {
-  background: radial-gradient(circle, rgba(6, 182, 212, 0.4) 0%, rgba(56, 189, 248, 0.15) 60%, transparent 75%);
-  animation: orbPulseListening 1.2s infinite ease-in-out;
+.companion-avatar-wrap.listening .avatar-ambient-glow {
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.4) 0%, rgba(244, 114, 182, 0.2) 60%, transparent 75%);
+  animation: celestialPulseListen 1.5s infinite ease-in-out;
 }
 
-.jarvis-orb-container.speaking .orb-aura-glow {
-  background: radial-gradient(circle, rgba(245, 158, 11, 0.4) 0%, rgba(217, 119, 6, 0.15) 60%, transparent 75%);
-  animation: orbPulseSpeaking 0.9s infinite ease-in-out;
+.companion-avatar-wrap.speaking .avatar-ambient-glow {
+  background: radial-gradient(circle, rgba(244, 114, 182, 0.45) 0%, rgba(251, 146, 60, 0.2) 60%, transparent 75%);
+  animation: celestialPulseSpeak 1.1s infinite ease-in-out;
 }
 
-.jarvis-orb-container.processing .orb-aura-glow {
-  background: radial-gradient(circle, rgba(168, 85, 247, 0.4) 0%, rgba(99, 102, 241, 0.15) 60%, transparent 75%);
-  animation: orbPulseProcessing 0.7s infinite ease-in-out;
+.companion-avatar-wrap.thinking .avatar-ambient-glow {
+  background: radial-gradient(circle, rgba(147, 51, 234, 0.45) 0%, rgba(99, 102, 241, 0.2) 60%, transparent 75%);
+  animation: celestialSwirlThinking 1.8s infinite ease-in-out;
 }
 
-@keyframes orbBreathe {
-  0%, 100% { transform: scale(1); opacity: 0.6; }
-  50% { transform: scale(1.15); opacity: 0.9; }
+@keyframes celestialBreathe {
+  0%, 100% { transform: scale(1); opacity: 0.65; }
+  50% { transform: scale(1.18); opacity: 0.95; }
 }
 
-@keyframes orbPulseListening {
-  0%, 100% { transform: scale(1.05); opacity: 0.7; }
-  50% { transform: scale(1.25); opacity: 1; }
-}
-
-@keyframes orbPulseSpeaking {
-  0%, 100% { transform: scale(1); opacity: 0.8; }
+@keyframes celestialPulseListen {
+  0%, 100% { transform: scale(1.05); opacity: 0.75; }
   50% { transform: scale(1.3); opacity: 1; }
 }
 
-@keyframes orbPulseProcessing {
-  0%, 100% { transform: scale(1.1); opacity: 0.8; }
-  50% { transform: scale(1.28); opacity: 1; }
+@keyframes celestialPulseSpeak {
+  0%, 100% { transform: scale(1.02); opacity: 0.8; }
+  50% { transform: scale(1.32); opacity: 1; }
 }
 
-/* Concentric Orbital Rings */
-.orb-ring {
+@keyframes celestialSwirlThinking {
+  0%, 100% { transform: scale(1.08); opacity: 0.75; }
+  50% { transform: scale(1.22); opacity: 1; }
+}
+
+/* Celestial Harmonic Rings */
+.avatar-ring {
   position: absolute;
   border-radius: 50%;
-  border: 1.5px dashed rgba(56, 189, 248, 0.35);
+  border: 1px solid rgba(216, 180, 254, 0.3);
   box-sizing: border-box;
 }
 
-.orb-ring-outer {
-  width: 190px;
-  height: 190px;
-  border-style: solid;
-  border-color: rgba(56, 189, 248, 0.2) transparent rgba(56, 189, 248, 0.2) transparent;
-  animation: rotateCW 18s linear infinite;
+.avatar-ring-outer {
+  width: 175px;
+  height: 175px;
+  border-color: rgba(244, 114, 182, 0.25) transparent rgba(192, 132, 252, 0.25) transparent;
+  animation: rotateCelestialCW 20s linear infinite;
 }
 
-.orb-ring-middle {
-  width: 145px;
-  height: 145px;
-  border-style: dashed;
-  border-color: rgba(99, 102, 241, 0.35);
-  animation: rotateCCW 12s linear infinite;
+.avatar-ring-mid {
+  width: 135px;
+  height: 135px;
+  border-style: dotted;
+  border-color: rgba(233, 213, 255, 0.35);
+  animation: rotateCelestialCCW 14s linear infinite;
 }
 
-.orb-ring-inner {
-  width: 105px;
-  height: 105px;
-  border-style: solid;
-  border-color: transparent rgba(6, 182, 212, 0.5) transparent rgba(6, 182, 212, 0.5);
-  animation: rotateCW 8s linear infinite;
+.avatar-ring-inner {
+  width: 95px;
+  height: 95px;
+  border-color: transparent rgba(244, 114, 182, 0.4) transparent rgba(192, 132, 252, 0.4);
+  animation: rotateCelestialCW 9s linear infinite;
 }
 
-@keyframes rotateCW {
+@keyframes rotateCelestialCW {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 
-@keyframes rotateCCW {
+@keyframes rotateCelestialCCW {
   from { transform: rotate(0deg); }
   to { transform: rotate(-360deg); }
 }
 
-/* Acoustic Waveform Frequency Bars */
-.orb-waveform-container {
+/* Starlight Harmonic Waves */
+.avatar-waves-container {
   position: absolute;
   display: flex;
   align-items: center;
-  gap: 5px;
-  height: 60px;
+  gap: 6px;
+  height: 50px;
   z-index: 2;
   pointer-events: none;
 }
 
-.wave-bar {
-  width: 4px;
-  height: 12px;
-  border-radius: 2px;
-  background-color: #38bdf8;
-  box-shadow: 0 0 6px #38bdf8;
+.starlight-bar {
+  width: 3px;
+  height: 10px;
+  border-radius: 3px;
+  background-color: #f472b6;
+  box-shadow: 0 0 6px #f472b6;
   transition: height 0.15s ease;
 }
 
-.jarvis-orb-container.listening .wave-bar {
+.companion-avatar-wrap.listening .starlight-bar {
   animation: wavePulseListen 0.8s infinite ease-in-out alternate;
 }
 
-.jarvis-orb-container.speaking .wave-bar {
-  background-color: #fbbf24;
-  box-shadow: 0 0 8px #fbbf24;
-  animation: wavePulseSpeak 0.4s infinite ease-in-out alternate;
+.companion-avatar-wrap.speaking .starlight-bar {
+  background-color: #fb7185;
+  box-shadow: 0 0 8px #fb7185;
+  animation: wavePulseSpeak 0.45s infinite ease-in-out alternate;
 }
 
-.wave-1 { animation-delay: 0.1s !important; }
-.wave-2 { animation-delay: 0.25s !important; }
-.wave-3 { animation-delay: 0.4s !important; }
-.wave-4 { animation-delay: 0.55s !important; }
-.wave-5 { animation-delay: 0.35s !important; }
-.wave-6 { animation-delay: 0.2s !important; }
-.wave-7 { animation-delay: 0.45s !important; }
+.bar-1 { animation-delay: 0.1s !important; }
+.bar-2 { animation-delay: 0.25s !important; }
+.bar-3 { animation-delay: 0.4s !important; }
+.bar-4 { animation-delay: 0.2s !important; }
+.bar-5 { animation-delay: 0.35s !important; }
 
-@keyframes wavePulseListen {
-  0% { height: 10px; }
-  100% { height: 35px; }
-}
-
-@keyframes wavePulseSpeak {
-  0% { height: 12px; }
-  100% { height: 50px; }
-}
-
-/* Neural Core */
-.orb-core {
-  width: 68px;
-  height: 68px;
+/* Luminous Core Presence */
+.avatar-luminous-core {
+  width: 62px;
+  height: 62px;
   border-radius: 50%;
-  background: radial-gradient(circle, #0284c7 0%, #0369a1 70%, #0c4a6e 100%);
-  border: 2px solid rgba(56, 189, 248, 0.7);
-  box-shadow: 0 0 20px rgba(56, 189, 248, 0.5);
+  background: radial-gradient(circle, #c084fc 0%, #9333ea 70%, #581c87 100%);
+  border: 1.5px solid rgba(245, 208, 254, 0.7);
+  box-shadow: 0 0 24px rgba(192, 132, 252, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 3;
 }
 
-.jarvis-orb-container.speaking .orb-core {
-  background: radial-gradient(circle, #d97706 0%, #b45309 70%, #78350f 100%);
-  border-color: #fbbf24;
-  box-shadow: 0 0 24px rgba(251, 191, 36, 0.6);
+.companion-avatar-wrap.speaking .avatar-luminous-core {
+  background: radial-gradient(circle, #f472b6 0%, #db2777 70%, #831843 100%);
+  border-color: #fbcfe8;
+  box-shadow: 0 0 26px rgba(244, 114, 182, 0.7);
 }
 
-.jarvis-orb-container.processing .orb-core {
-  background: radial-gradient(circle, #7c3aed 0%, #6d28d9 70%, #4c1d95 100%);
-  border-color: #c084fc;
-  box-shadow: 0 0 24px rgba(192, 132, 252, 0.6);
+.companion-avatar-wrap.thinking .avatar-luminous-core {
+  background: radial-gradient(circle, #a855f7 0%, #7e22ce 70%, #3b0764 100%);
+  border-color: #e9d5ff;
+  box-shadow: 0 0 26px rgba(168, 85, 247, 0.7);
 }
 
-.orb-center-icon {
-  font-size: 1.3rem;
+.avatar-core-glyph {
+  font-size: 1.25rem;
 }
 
-/* State Status Label */
-.jarvis-state-status {
-  margin-top: 0.5rem;
+/* Presence Status Label */
+.companion-presence-status {
+  margin-top: 0.35rem;
 }
 
-.status-label {
+.presence-label {
   font-family: var(--font-sans);
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
-.status-label.listening { color: #38bdf8; }
-.status-label.thinking { color: #c084fc; }
-.status-label.speaking { color: #fbbf24; }
-.status-label.idle { color: var(--text-muted); }
+.presence-label.listening { color: #c084fc; }
+.presence-label.thinking { color: #e9d5ff; }
+.presence-label.speaking { color: #f472b6; }
+.presence-label.idle { color: #a1a1aa; }
 
-/* Captions & Subtitles Display */
-.jarvis-captions-display {
+/* Captions & Subtitles Box */
+.companion-captions-box {
   flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 0.875rem;
-  padding: 1rem;
-  background: rgba(15, 23, 42, 0.5);
-  border: 1px solid rgba(56, 189, 248, 0.15);
+  padding: 1.15rem;
+  background: rgba(28, 22, 45, 0.45);
+  border: 1px solid rgba(192, 132, 252, 0.15);
   border-radius: var(--radius-lg);
-  max-height: 240px;
+  max-height: 250px;
 }
 
-.caption-bubble {
+.companion-caption-item {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
 }
 
-.caption-sender {
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
+.caption-tag {
+  font-size: 0.725rem;
+  font-weight: 700;
+  color: #c4b5fd;
 }
 
-.user-caption .caption-sender { color: #38bdf8; }
-.jarvis-caption .caption-sender { color: #a5b4fc; }
+.companion-tag {
+  color: #f472b6;
+}
 
-.caption-text {
+.caption-body {
   font-size: 0.925rem;
-  line-height: 1.5;
-  color: var(--text-primary);
+  line-height: 1.55;
+  color: #f8fafc;
 }
 
-.markdown-caption {
-  font-size: 0.9rem;
+.markdown-caption-body {
+  font-size: 0.925rem;
 }
 
-/* Bottom HUD Controls */
-.jarvis-hud-controls {
+/* Sanctuary Bottom Controls */
+.sanctuary-controls-bar {
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid rgba(56, 189, 248, 0.15);
+  padding-top: 1.15rem;
+  border-top: 1px solid rgba(192, 132, 252, 0.15);
 }
 
-.hud-ctrl-btn {
+.btn-sanctuary-ctrl {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
   font-family: var(--font-sans);
   font-size: 0.825rem;
   font-weight: 600;
-  padding: 0.65rem 1.15rem;
-  border-radius: var(--radius-md);
-  background: rgba(30, 41, 59, 0.8);
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
+  padding: 0.65rem 1.25rem;
+  border-radius: var(--radius-full);
+  background: rgba(39, 30, 60, 0.75);
+  border: 1px solid rgba(192, 132, 252, 0.25);
+  color: #f8fafc;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.hud-ctrl-btn:hover:not(:disabled) {
-  background: rgba(51, 65, 85, 0.9);
-  border-color: #38bdf8;
+.btn-sanctuary-ctrl:hover:not(:disabled) {
+  background: rgba(58, 44, 90, 0.9);
+  border-color: #c084fc;
 }
 
-.hud-ctrl-btn.btn-active {
-  background: rgba(6, 182, 212, 0.15);
-  border-color: #06b6d4;
-  color: #67e8f9;
+.btn-sanctuary-ctrl.btn-handsfree-active {
+  background: rgba(168, 85, 247, 0.2);
+  border-color: #c084fc;
+  color: #f5d0fe;
 }
 
-.hud-ctrl-btn.btn-primary-action {
-  background: linear-gradient(135deg, #0284c7, #4f46e5);
+.btn-sanctuary-ctrl.btn-primary-voice {
+  background: linear-gradient(135deg, #9333ea, #db2777);
   border: none;
   color: white;
+  box-shadow: 0 4px 12px rgba(219, 39, 119, 0.3);
 }
 
-.hud-ctrl-btn.btn-primary-action:hover:not(:disabled) {
-  opacity: 0.92;
+.btn-sanctuary-ctrl.btn-primary-voice:hover:not(:disabled) {
+  opacity: 0.94;
 }
 
-.hud-ctrl-btn.btn-listening {
-  background: rgba(239, 68, 68, 0.2);
-  border-color: #ef4444;
-  color: #fca5a5;
+.btn-sanctuary-ctrl.btn-listening-state {
+  background: rgba(244, 63, 94, 0.25);
+  border-color: #f43f5e;
+  color: #fecdd3;
 }
 
-.hud-ctrl-btn.btn-interrupt {
+.btn-sanctuary-ctrl.btn-interrupt-voice {
   background: rgba(245, 158, 11, 0.2);
   border-color: #f59e0b;
   color: #fde68a;
 }
+
 

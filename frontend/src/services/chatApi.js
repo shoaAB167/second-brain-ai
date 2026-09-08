@@ -1,19 +1,22 @@
+import { refreshToken } from "./authApi";
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 /**
- * Robust SSE Stream parser function reading POST response streams in JavaScript.
- * Handles split network chunks, CRLF/LF event boundaries (\r\n\r\n and \n\n),
- * multi-byte UTF-8 boundaries, multiple data events per chunk, and Bearer JWT auth.
+ * Robust SSE Stream parser reading POST response streams in JavaScript.
+ * Automatically handles 401 token refresh retry, split network chunks,
+ * CRLF/LF event boundaries, multi-byte UTF-8 boundaries, and cancellation.
  */
 export async function streamChatResponse(
   payload,
   onEvent,
   onError,
-  signal
+  signal,
+  isRetry = false
 ) {
   const url = `${API_BASE_URL}/api/v1/chat/stream`;
-  const token = payload.token || localStorage.getItem("sb_auth_token");
+  let token = payload.token || localStorage.getItem("sb_auth_token");
 
   const headers = {
     "Content-Type": "application/json",
@@ -36,14 +39,32 @@ export async function streamChatResponse(
     });
 
     if (!response.ok) {
+      // If 401 Unauthorized and not already a retry, attempt automatic silent token refresh
+      if (response.status === 401 && !isRetry && token) {
+        try {
+          const newToken = await refreshToken(token);
+          if (newToken) {
+            return await streamChatResponse(
+              { ...payload, token: newToken },
+              onEvent,
+              onError,
+              signal,
+              true
+            );
+          }
+        } catch {
+          // Token refresh failed, fall through to reporting 401 error
+        }
+      }
+
       const errorText = await response.text().catch(() => "");
-      let message = "Failed to communicate with Second Brain AI backend.";
+      let message = "Failed to communicate with Second Brain companion.";
       try {
         const parsed = JSON.parse(errorText);
         message = parsed.error?.message || parsed.detail || message;
       } catch {
         if (response.status === 401) {
-          message = "Authentication required. Please log in to continue.";
+          message = "Authentication session expired. Please log in again.";
         } else if (response.status === 404) {
           message = "Conversation thread not found.";
         }
@@ -101,7 +122,7 @@ export async function streamChatResponse(
     if (err.name === "AbortError") {
       return;
     }
-    onError("Unable to connect to Second Brain AI server. Please make sure the backend server is running.");
+    onError("Unable to connect to Second Brain. Please ensure the server is running.");
   }
 }
 
